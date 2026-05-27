@@ -4,6 +4,8 @@
 
 const TYPE_COLOR = { Red: '#b8324a', White: '#e8d27a', 'Rosé': '#e08aa3', Sparkling: '#6fb3c9', Sweet: '#c794d6', Orange: '#d68a3a' };
 const STORAGE_KEY = 'ancora-map-member';
+const CART_KEY = 'ancora-map-cart';
+const DEFAULT_VIEW = { center: [35, 5], zoom: 3 };
 
 // Wine-producing countries — each gets its own warm earth-tone fill so
 // adjacent countries are visually distinguishable on the map.
@@ -58,6 +60,8 @@ const state = {
   member: null, // { email, name, purchases: [...] }
   memberView: 'all', // 'all' | 'mine'
   highlightWineKey: null, // when search picks one, draw extra ring
+  cart: [], // demo cart: [{ name, vintage, priceUSD, qty }]
+  hasUserPannedOrZoomed: false,
 };
 
 // ---------- Init ----------
@@ -76,15 +80,22 @@ map.getPane('regionLabels').style.pointerEvents = 'none';
 (function init() {
   state.wines = (window.WINES || []).filter(w => w.lat != null && w.lng != null);
   document.getElementById('totalCount').textContent = state.wines.length;
+  loadCart();
   buildFilters();
   loadMemberFromStorage();
   loadCountryLayer();
   wireSearch();
   wireLogin();
   wireChat();
+  wireWineModal();
+  wireResetZoom();
   renderMemberCtl();
   render(true);
   map.on('zoomend', updateRegionLabels);
+  // Track user interaction so we know not to auto-fit after the first render
+  map.on('zoomstart movestart', () => {
+    if (state.markers.length) state.hasUserPannedOrZoomed = true;
+  });
 })();
 
 // ---------- Country polygon coloring ----------
@@ -230,11 +241,12 @@ function render(fitBounds) {
   state.regionLabels.forEach(t => map.removeLayer(t));
   state.regionLabels = [];
 
-  // Choose which set of wines to draw
+  // Choose which set of wines to draw — filters apply in both views
   let visibleWines;
   if (state.member && state.memberView === 'mine') {
-    visibleWines = state.member.purchases.filter(w => w.lat != null && w.lng != null);
-    document.getElementById('visibleCount').textContent = `${visibleWines.length} of your purchased wines`;
+    const placed = state.member.purchases.filter(w => w.lat != null && w.lng != null);
+    visibleWines = placed.filter(passesFilters);
+    document.getElementById('visibleCount').textContent = `${visibleWines.length} of your ${placed.length} purchased wines`;
   } else {
     visibleWines = state.wines.filter(passesFilters);
     document.getElementById('visibleCount').textContent = visibleWines.length;
@@ -271,6 +283,7 @@ function render(fitBounds) {
       opacity: 0.92,
       fillOpacity: 0.78,
     }).addTo(map);
+    marker._cluster = cluster;
     marker.bindPopup(() => buildPopup(cluster), { maxWidth: 360, maxHeight: 380 });
     state.markers.push(marker);
     bounds.push([cluster.lat, cluster.lng]);
@@ -279,7 +292,9 @@ function render(fitBounds) {
   // Region labels
   updateRegionLabels();
 
-  if (fitBounds && bounds.length) {
+  // Only auto-fit on the very first render. After the user has moved/zoomed,
+  // we never change their view — they have a Reset Zoom button for that.
+  if (fitBounds && bounds.length && !state.hasUserPannedOrZoomed) {
     map.fitBounds(bounds, { padding: [40, 40], maxZoom: 5 });
   }
 }
@@ -291,7 +306,7 @@ function updateRegionLabels() {
   // Hidden at world view, fade in as you zoom in. Below zoom 5 = nothing.
   if (zoom < 5) return;
   const visibleWines = (state.member && state.memberView === 'mine')
-    ? state.member.purchases.filter(w => w.lat != null)
+    ? state.member.purchases.filter(w => w.lat != null).filter(passesFilters)
     : state.wines.filter(passesFilters);
   const byLocation = new Map();
   for (const w of visibleWines) {
@@ -330,19 +345,20 @@ function buildPopup(cluster) {
     if (aSold !== bSold) return aSold - bSold;
     return a.priceUSD - b.priceUSD;
   });
-  const winesHtml = sorted.map(w => {
+  const winesHtml = sorted.map((w, i) => {
     const statusBadge = statusToBadge(w.status);
     const memberBadge = purchaseKeys.has(normalizeName(w.name)) ? ' <span class="popup-status member">YOURS</span>' : '';
     const grapeStr = w.grapes && w.grapes.length ? w.grapes.join(', ') : '—';
-    const url = w.shopUrl || ('https://ancoravino.wine/products/search?keyword=' + encodeURIComponent(w.name));
     return `
-      <a class="popup-wine" href="${escapeAttr(url)}" target="_blank" rel="noopener">
+      <div class="popup-wine" data-wine-idx="${i}">
         <div class="popup-name">${w.vintage ? w.vintage + ' ' : ''}${escapeHtml(w.name)}${statusBadge}${memberBadge}</div>
         <div class="popup-meta">${escapeHtml(grapeStr)} &middot; ${escapeHtml(w.type)}, ${escapeHtml(w.body || '')} &middot; <span class="popup-price">$${w.priceUSD}</span></div>
-        <div class="popup-link">View on Ancora Vino →</div>
-      </a>
+        <div class="popup-link">View this wine →</div>
+      </div>
     `;
   }).join('');
+  // Stash sorted wines on the cluster so the popup click handler can find them
+  cluster._sortedWines = sorted;
   return `
     <div class="popup-region">${escapeHtml(cluster.region)} &middot; ${escapeHtml(cluster.country)} &middot; ${cluster.wines.length} wine${cluster.wines.length === 1 ? '' : 's'}</div>
     ${winesHtml}
@@ -469,6 +485,8 @@ function wireLogin() {
     modal.classList.remove('open');
     renderMemberCtl();
     showToast(`Welcome, ${acct.name}!`, 'You have signed in and can now see your purchased wines highlighted on the map.');
+    // Allow auto-fit on initial sign-in (counts as initial render of member view)
+    state.hasUserPannedOrZoomed = false;
     render(true);
   }
 }
@@ -485,12 +503,17 @@ function loadMemberFromStorage() {
 
 function renderMemberCtl() {
   const ctl = document.getElementById('memberCtl');
+  const cartQty = state.cart.reduce((s, c) => s + c.qty, 0);
+  const cartHtml = cartQty > 0
+    ? `<span class="cart-badge" id="cartBadge" title="Demo cart">🛒 <span class="n">${cartQty}</span></span>`
+    : '';
   if (!state.member) {
-    ctl.innerHTML = '<button id="memberBtn">Member Log In</button>';
+    ctl.innerHTML = cartHtml + '<button id="memberBtn">Member Log In</button>';
     document.getElementById('memberBtn').addEventListener('click', () => document.getElementById('loginModal').classList.add('open'));
   } else {
     const purchaseCount = state.member.purchases.filter(w => w.lat != null).length;
     ctl.innerHTML = `
+      ${cartHtml}
       <div class="member-toggle">
         <button data-view="mine" class="${state.memberView === 'mine' ? 'on' : ''}">My wines (${purchaseCount})</button>
         <button data-view="all" class="${state.memberView === 'all' ? 'on' : ''}">All wines</button>
@@ -498,7 +521,11 @@ function renderMemberCtl() {
       <div class="member-name"><b>${escapeHtml(state.member.name)}</b> · <a href="#" id="logoutLink" style="color:var(--muted); text-decoration: underline;">Sign out</a></div>
     `;
     ctl.querySelectorAll('.member-toggle button').forEach(b => {
-      b.addEventListener('click', () => { state.memberView = b.dataset.view; renderMemberCtl(); render(true); });
+      b.addEventListener('click', () => {
+        state.memberView = b.dataset.view;
+        renderMemberCtl();
+        render(false); // preserve current zoom
+      });
     });
     document.getElementById('logoutLink').addEventListener('click', e => {
       e.preventDefault();
@@ -506,9 +533,18 @@ function renderMemberCtl() {
       state.memberView = 'all';
       try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
       renderMemberCtl();
-      render(true);
+      render(false);
     });
   }
+  const cartEl = document.getElementById('cartBadge');
+  if (cartEl) cartEl.addEventListener('click', showCartSummary);
+}
+
+function showCartSummary() {
+  if (!state.cart.length) return;
+  const total = state.cart.reduce((s, c) => s + c.priceUSD * c.qty, 0);
+  const lines = state.cart.map(c => `${c.qty}× ${c.vintage ? c.vintage + ' ' : ''}${c.name} — $${(c.priceUSD * c.qty).toFixed(2)}`).join('\n');
+  alert(`Cart (demo — checkout is not wired):\n\n${lines}\n\nTotal: $${total.toFixed(2)}`);
 }
 
 function showToast(title, body) {
@@ -517,6 +553,115 @@ function showToast(title, body) {
   t.innerHTML = `<div class="icon">i</div><div><b>${escapeHtml(title)}</b><small>${escapeHtml(body)}</small></div>`;
   document.body.appendChild(t);
   setTimeout(() => { t.style.transition = 'opacity 0.4s'; t.style.opacity = '0'; setTimeout(() => t.remove(), 500); }, 5000);
+}
+
+// ---------- Wine detail modal + cart ----------
+function wireWineModal() {
+  const modal = document.getElementById('wineModal');
+  modal.addEventListener('click', e => {
+    if (e.target === modal) modal.classList.remove('open');
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      modal.classList.remove('open');
+      document.getElementById('chatPanel').classList.remove('open');
+      document.getElementById('loginModal').classList.remove('open');
+    }
+  });
+  // Wire popup wine clicks → open wine card
+  map.on('popupopen', e => {
+    const cluster = (e.popup._source && e.popup._source._cluster) || null;
+    const popup = e.popup.getElement();
+    if (!popup) return;
+    popup.querySelectorAll('.popup-wine').forEach(el => {
+      el.addEventListener('click', () => {
+        const idx = parseInt(el.dataset.wineIdx, 10);
+        const sorted = cluster && cluster._sortedWines;
+        const wine = sorted ? sorted[idx] : null;
+        if (wine) showWineCard(wine);
+      });
+    });
+  });
+}
+
+function showWineCard(w) {
+  const modal = document.getElementById('wineModal');
+  const card = document.getElementById('wineCard');
+  const status = (w.status || '').toUpperCase();
+  const isSold = status === 'SOLD OUT';
+  const isPre = status === 'PRE-ORDER';
+  const grapeStr = w.grapes && w.grapes.length ? w.grapes.join(', ') : '—';
+  const purchaseKeys = state.member ? new Set(state.member.purchases.map(p => normalizeName(p.name))) : new Set();
+  const isYours = purchaseKeys.has(normalizeName(w.name));
+  const shopUrl = w.shopUrl || ('https://ancoravino.wine/products/search?keyword=' + encodeURIComponent(w.name));
+  const stockText = isSold ? 'Sold out at Ancora Vino' : isPre ? 'Pre-order — shipping soon' : 'In stock at Ancora Vino';
+  const stockCls = isSold ? 'sold' : isPre ? 'pre' : '';
+  card.innerHTML = `
+    <button class="close" id="wineCardClose">×</button>
+    <div class="wc-region">${escapeHtml(w.region)} &middot; ${escapeHtml(w.country)}${isYours ? ' &middot; <span style="color:var(--gold)">YOURS</span>' : ''}</div>
+    <div class="wc-name">${escapeHtml(w.name)}</div>
+    <div class="wc-vintage">${w.vintage ? 'Vintage ' + w.vintage : 'Non-vintage'}${w.producer ? ' &middot; ' + escapeHtml(w.producer) : ''}</div>
+    <div class="wc-divider"></div>
+    <div class="wc-detail-row"><span class="k">Type</span><span class="v">${escapeHtml(w.type)}</span></div>
+    <div class="wc-detail-row"><span class="k">Body</span><span class="v">${escapeHtml(w.body || '—')}</span></div>
+    <div class="wc-detail-row"><span class="k">Grape</span><span class="v">${escapeHtml(grapeStr)}</span></div>
+    ${w.orderedDate ? `<div class="wc-detail-row"><span class="k">You bought</span><span class="v">${escapeHtml(w.orderedDate)}</span></div>` : ''}
+    <div class="wc-price">$${w.priceUSD}</div>
+    <div class="wc-stock ${stockCls}">${stockText}</div>
+    <div class="wc-actions">
+      <button class="wc-btn primary" id="wcAddBtn"${isSold ? ' disabled' : ''}>${isSold ? 'Sold out' : 'Add to cart'}</button>
+      <a class="wc-btn secondary" href="${escapeAttr(shopUrl)}" target="_blank" rel="noopener">View on Ancora Vino →</a>
+    </div>
+  `;
+  modal.classList.add('open');
+  document.getElementById('wineCardClose').addEventListener('click', () => modal.classList.remove('open'));
+  const addBtn = document.getElementById('wcAddBtn');
+  if (addBtn && !isSold) {
+    addBtn.addEventListener('click', () => addToCart(w));
+  }
+}
+
+// ---------- Cart (demo only — stored in localStorage) ----------
+function loadCart() {
+  try {
+    const raw = localStorage.getItem(CART_KEY);
+    if (raw) state.cart = JSON.parse(raw) || [];
+  } catch (_) { state.cart = []; }
+}
+function saveCart() {
+  try { localStorage.setItem(CART_KEY, JSON.stringify(state.cart)); } catch (_) {}
+}
+function addToCart(w) {
+  const key = normalizeName((w.vintage ? w.vintage + ' ' : '') + w.name);
+  const existing = state.cart.find(c => c.key === key);
+  if (existing) existing.qty += 1;
+  else state.cart.push({ key, name: w.name, vintage: w.vintage, priceUSD: w.priceUSD, qty: 1 });
+  saveCart();
+  renderCartBadge();
+  showToast('Added to cart', `${w.vintage ? w.vintage + ' ' : ''}${w.name} · $${w.priceUSD}`);
+}
+function renderCartBadge() {
+  const ctl = document.getElementById('memberCtl');
+  if (!ctl) return;
+  // Re-render member control which also renders the cart badge inline
+  renderMemberCtl();
+}
+
+// ---------- Reset zoom ----------
+function wireResetZoom() {
+  const btn = document.getElementById('resetZoom');
+  btn.addEventListener('click', () => {
+    // Compute fit-bounds of currently visible wines
+    const visible = (state.member && state.memberView === 'mine')
+      ? state.member.purchases.filter(w => w.lat != null).filter(passesFilters)
+      : state.wines.filter(passesFilters);
+    if (visible.length) {
+      const bounds = visible.map(w => [w.lat, w.lng]);
+      map.fitBounds(bounds, { padding: [40, 40], maxZoom: 5 });
+    } else {
+      map.setView(DEFAULT_VIEW.center, DEFAULT_VIEW.zoom);
+    }
+  });
 }
 
 // ---------- Chatbot ----------

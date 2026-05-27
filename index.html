@@ -167,6 +167,40 @@
   .chat-input-row button { background: var(--accent); color: white; border: none; border-radius: 50%; width: 36px; height: 36px; cursor: pointer; flex: 0 0 36px; font-size: 16px; }
   .chat-input-row button:hover { background: var(--accent-2); }
 
+  /* Wine detail modal */
+  #wineModal { position: fixed; inset: 0; background: rgba(0,0,0,0.72); z-index: 1800; display: none; align-items: center; justify-content: center; padding: 24px; }
+  #wineModal.open { display: flex; }
+  .wine-card { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 12px; max-width: 480px; width: 100%; padding: 28px 32px; position: relative; box-shadow: 0 16px 40px rgba(0,0,0,0.6); }
+  .wine-card .close { position: absolute; top: 10px; right: 14px; background: none; border: none; font-size: 22px; cursor: pointer; color: var(--muted); }
+  .wine-card .close:hover { color: var(--text); }
+  .wc-region { font-size: 11px; text-transform: uppercase; letter-spacing: 1.4px; color: var(--gold); margin-bottom: 10px; }
+  .wc-name { font-size: 21px; font-weight: 600; line-height: 1.25; margin-bottom: 6px; }
+  .wc-vintage { color: var(--muted); font-size: 13px; }
+  .wc-divider { height: 1px; background: var(--border); margin: 18px 0; }
+  .wc-detail-row { display: flex; justify-content: space-between; padding: 6px 0; font-size: 13px; }
+  .wc-detail-row .k { color: var(--muted); }
+  .wc-detail-row .v { color: var(--text); text-align: right; }
+  .wc-price { font-size: 32px; font-weight: 700; color: var(--accent-2); margin: 14px 0 6px; }
+  .wc-stock { font-size: 12px; color: var(--muted); margin-bottom: 18px; }
+  .wc-stock.sold { color: #d65a72; }
+  .wc-stock.pre { color: #6fb3c9; }
+  .wc-actions { display: flex; gap: 10px; }
+  .wc-btn { flex: 1; padding: 12px 16px; border-radius: 6px; border: none; cursor: pointer; font: inherit; font-weight: 600; font-size: 13px; text-decoration: none; text-align: center; display: inline-flex; align-items: center; justify-content: center; }
+  .wc-btn.primary { background: var(--accent); color: white; }
+  .wc-btn.primary:hover { background: var(--accent-2); }
+  .wc-btn.primary[disabled] { background: var(--border); color: var(--muted); cursor: not-allowed; }
+  .wc-btn.secondary { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); }
+  .wc-btn.secondary:hover { border-color: var(--accent); color: var(--accent-2); }
+
+  /* Reset Zoom button */
+  #resetZoom { position: absolute; left: 50px; top: 76px; background: var(--panel); border: 1px solid var(--border); color: var(--text); padding: 6px 12px; border-radius: 4px; cursor: pointer; font: inherit; font-size: 12px; z-index: 600; box-shadow: 0 2px 8px rgba(0,0,0,0.4); }
+  #resetZoom:hover { border-color: var(--accent); color: var(--accent-2); }
+
+  /* Cart badge in topbar */
+  .cart-badge { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 16px; font-size: 12px; color: var(--text); cursor: pointer; }
+  .cart-badge:hover { border-color: var(--accent); }
+  .cart-badge .n { background: var(--accent); color: white; padding: 0 7px; border-radius: 10px; font-weight: 600; font-size: 11px; min-width: 18px; text-align: center; }
+
   .toast { position: fixed; top: 70px; right: 16px; background: white; color: #1a1a1a; padding: 14px 18px; border-radius: 6px; box-shadow: 0 8px 28px rgba(0,0,0,0.4); display: flex; gap: 12px; align-items: flex-start; max-width: 340px; z-index: 1500; }
   .toast .icon { width: 22px; height: 22px; border-radius: 50%; background: #ddd; flex: 0 0 22px; display: flex; align-items: center; justify-content: center; font-size: 13px; color: #666; }
   .toast b { display: block; margin-bottom: 2px; }
@@ -244,7 +278,9 @@
       <span>$600</span>
     </div>
   </aside>
-  <div id="map"></div>
+  <div id="map">
+    <button id="resetZoom" title="Reset zoom to world view">⌖ Reset zoom</button>
+  </div>
 </div>
 
 <!-- Login modal styled like ancoravino.wine/products/account -->
@@ -282,6 +318,11 @@
       <div class="terms">By continuing, you accept <a href="#">Terms &amp; Conditions</a>, <a href="#">Privacy Policy</a></div>
     </div>
   </div>
+</div>
+
+<!-- Wine detail modal -->
+<div id="wineModal">
+  <div class="wine-card" id="wineCard"><!-- populated by app.js --></div>
 </div>
 
 <!-- Chatbot -->
