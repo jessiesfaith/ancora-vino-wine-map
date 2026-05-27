@@ -12,6 +12,84 @@ const DEFAULT_VIEW = { center: [35, 5], zoom: 3 };
 const REGION_PALETTE = ['#a8463a', '#3d6a5e', '#a8763d', '#4a5e7a', '#7e3e5a', '#5a6a3e', '#8e5a4a', '#3e7a6b'];
 const NEIGHBOR_KM = 350; // regions closer than this count as neighbors for coloring purposes
 
+// Map admin-1 polygon names (as they appear in Natural Earth) → wine region in our data.
+// This lets us color the Tuscany polygon when our wine says region="Tuscany",
+// the Nouvelle-Aquitaine polygon for "Bordeaux", etc.
+const ADMIN1_TO_WINE_REGION = {
+  // Italy (20 regions)
+  'Toscana': 'Tuscany', 'Tuscany': 'Tuscany',
+  'Piemonte': 'Piedmont', 'Piedmont': 'Piedmont',
+  'Sicilia': 'Sicily', 'Sicily': 'Sicily',
+  'Sardegna': 'Sardinia', 'Sardinia': 'Sardinia',
+  'Lombardia': 'Lombardy', 'Lombardy': 'Lombardy',
+  'Puglia': 'Puglia', 'Apulia': 'Puglia',
+  'Marche': 'Marches', 'Marches': 'Marches',
+  'Emilia-Romagna': 'Emilia-Romagna',
+  'Veneto': 'Veneto',
+  'Friuli-Venezia Giulia': 'Friuli', 'Friuli Venezia Giulia': 'Friuli',
+  'Liguria': 'Liguria',
+  'Umbria': 'Umbria',
+  'Lazio': 'Lazio',
+  'Campania': 'Campania',
+  'Calabria': 'Calabria',
+  'Abruzzo': 'Abruzzo', 'Abruzzi': 'Abruzzo',
+  'Molise': 'Molise',
+  'Basilicata': 'Basilicata',
+  'Trentino-Alto Adige': 'Trento', 'Trentino-Alto Adige/Sudtirol': 'Trento',
+  "Valle d'Aosta": 'Aosta Valley', "Vallée d'Aoste": 'Aosta Valley',
+  // France — both old (22) and new (13) regions
+  'Aquitaine': 'Bordeaux', 'Nouvelle-Aquitaine': 'Bordeaux',
+  'Bourgogne': 'Burgundy', 'Bourgogne-Franche-Comté': 'Burgundy',
+  'Champagne-Ardenne': 'Champagne', 'Grand Est': 'Champagne',
+  'Alsace': 'Alsace',
+  'Auvergne-Rhône-Alpes': 'Rhône', 'Rhône-Alpes': 'Rhône', 'Rhone-Alpes': 'Rhône',
+  "Provence-Alpes-Côte d'Azur": 'Provence', 'Provence-Alpes-Cote-d\'Azur': 'Provence', "Provence-Alpes-Côte-d'Azur": 'Provence',
+  'Languedoc-Roussillon': 'Languedoc', 'Occitanie': 'Languedoc',
+  'Midi-Pyrénées': 'Cahors', 'Midi-Pyrenees': 'Cahors',
+  'Pays de la Loire': 'Loire Valley', 'Centre': 'Loire Valley', 'Centre-Val de Loire': 'Loire Valley',
+  'Corse': 'Corsica', 'Corsica': 'Corsica',
+  'Franche-Comté': 'Jura', 'Franche-Comte': 'Jura',
+  // Spain (autonomous communities)
+  'La Rioja': 'Rioja',
+  'Galicia': 'Rías Baixas',
+  'Cataluña': 'Penedès', 'Catalunya': 'Penedès', 'Catalonia': 'Penedès',
+  'Castilla-La Mancha': 'Castile-La Mancha',
+  'Castilla y León': 'Ribera del Duero', 'Castile and León': 'Ribera del Duero',
+  'Comunidad Valenciana': 'Valencia',
+  // Portugal
+  'Norte': 'Douro',
+  'Alentejo': 'Alentejo',
+  'Lisboa': 'Lisboa', 'Lisbon': 'Lisboa',
+  'Centro': 'Dão',
+  // Germany
+  'Rheinland-Pfalz': 'Mosel', 'Rhineland-Palatinate': 'Mosel',
+  'Hessen': 'Rheingau', 'Hesse': 'Rheingau',
+  'Baden-Württemberg': 'Baden', 'Baden-Wurttemberg': 'Baden',
+  // Austria
+  'Niederösterreich': 'Niederösterreich', 'Lower Austria': 'Niederösterreich',
+  // USA states
+  'California': 'California',
+  'Oregon': 'Willamette Valley',
+  'Washington': 'Columbia Valley',
+  'New York': 'Finger Lakes',
+  // South Africa
+  'Western Cape': 'Western Cape',
+  // Argentina
+  'Mendoza': 'Mendoza',
+  // Australia states
+  'Victoria': 'Victoria',
+  'South Australia': 'McLaren Vale',
+  // New Zealand regions
+  'Marlborough': 'Marlborough',
+  // Hungary
+  'Borsod-Abaúj-Zemplén': 'Tokaj',
+  // Greece
+  'Attiki': 'Attica', 'Attica': 'Attica',
+  'Crete': 'Crete', 'Kriti': 'Crete',
+  // UK
+  'Kent': 'Kent',
+};
+
 function kmBetween(lat1, lng1, lat2, lng2) {
   const R = 6371;
   const toRad = d => d * Math.PI / 180;
@@ -109,6 +187,87 @@ map.getPane('wineDots').style.zIndex = 550;
 
 // ---------- Region coloring (semi-transparent circles per wine region) ----------
 function loadCountryLayer() {
+  // Wine regions that ARE present in our catalog — only color admin-1 polygons whose
+  // mapped wine region is actually represented.
+  const wineRegionsInUse = new Set(state.wines.map(w => w.region));
+
+  // Fetch admin-1 (states/provinces) polygons. CDN-hosted Natural Earth 50m.
+  fetch('https://cdn.jsdelivr.net/gh/nvkelso/natural-earth-vector@master/geojson/ne_50m_admin_1_states_provinces.geojson')
+    .then(r => r.json())
+    .then(geo => renderRegionPolygons(geo, wineRegionsInUse))
+    .catch(err => {
+      console.warn('Admin-1 GeoJSON failed, falling back to circles:', err);
+      renderRegionCircles();
+    });
+}
+
+function renderRegionPolygons(geo, wineRegionsInUse) {
+  // Keep only features whose admin-1 name maps to a wine region we have wines from
+  const features = geo.features.filter(f => {
+    const p = f.properties || {};
+    const name = p.name || p.NAME || p.name_en || p.NAME_EN;
+    const mapped = ADMIN1_TO_WINE_REGION[name];
+    return mapped && wineRegionsInUse.has(mapped);
+  });
+
+  // Compute a color per feature so neighbors differ (greedy graph coloring by centroid distance)
+  const centers = features.map(f => {
+    const layer = L.geoJSON(f);
+    const c = layer.getBounds().getCenter();
+    return { feature: f, lat: c.lat, lng: c.lng };
+  });
+  // Sort by latitude (north→south) for a deterministic order
+  centers.sort((a, b) => b.lat - a.lat || a.lng - b.lng);
+  const colorForFeature = new Map();
+  for (const c of centers) {
+    const used = new Set();
+    for (const [otherFeature, otherColor] of colorForFeature.entries()) {
+      const other = centers.find(x => x.feature === otherFeature);
+      if (!other) continue;
+      if (kmBetween(c.lat, c.lng, other.lat, other.lng) < 600) used.add(otherColor);
+    }
+    const color = REGION_PALETTE.find(p => !used.has(p)) || REGION_PALETTE[centers.indexOf(c) % REGION_PALETTE.length];
+    colorForFeature.set(c.feature, color);
+  }
+
+  // Clear existing layers
+  state.regionFillLayers.forEach(l => map.removeLayer(l));
+  state.regionFillLayers = [];
+  state.regionLabels.forEach(l => map.removeLayer(l));
+  state.regionLabels = [];
+
+  // Draw polygons
+  for (const f of features) {
+    const p = f.properties || {};
+    const name = p.name || p.NAME || p.name_en || p.NAME_EN;
+    const wineRegion = ADMIN1_TO_WINE_REGION[name];
+    const color = colorForFeature.get(f);
+    const layer = L.geoJSON(f, {
+      style: {
+        fillColor: color,
+        color: '#2a1d1f',
+        weight: 0.7,
+        fillOpacity: 0.62,
+      },
+      pane: 'regionFills',
+      interactive: false,
+    }).addTo(map);
+    state.regionFillLayers.push(layer);
+    // Stash for label rendering
+    const bounds = layer.getBounds();
+    const c = bounds.getCenter();
+    layer._labelCenter = c;
+    layer._labelName = wineRegion;
+    layer._labelSpan = Math.max(
+      kmBetween(bounds.getNorth(), c.lng, bounds.getSouth(), c.lng),
+      kmBetween(c.lat, bounds.getWest(), c.lat, bounds.getEast())
+    );
+  }
+  updateRegionLabels();
+}
+
+// Fallback: old circles approach (used if GeoJSON fetch fails)
+function renderRegionCircles() {
   const regionCenters = new Map();
   for (const w of state.wines) {
     if (w.lat == null) continue;
@@ -116,19 +275,12 @@ function loadCountryLayer() {
     if (!regionCenters.has(key)) regionCenters.set(key, { lat: w.lat, lng: w.lng, region: w.region, country: w.country });
   }
   const colorMap = computeRegionColors(regionCenters);
-  state.regionColorMap = colorMap;
   state.regionFillLayers.forEach(l => map.removeLayer(l));
   state.regionFillLayers = [];
   for (const [key, r] of regionCenters.entries()) {
-    const color = colorMap.get(key);
     const c = L.circle([r.lat, r.lng], {
-      radius: 120000, // 120 km — bigger fills, less fragmented
-      fillColor: color,
-      color: color,
-      weight: 0,
-      fillOpacity: 0.55,
-      pane: 'regionFills',
-      interactive: false,
+      radius: 120000, fillColor: colorMap.get(key), color: colorMap.get(key),
+      weight: 0, fillOpacity: 0.55, pane: 'regionFills', interactive: false,
     }).addTo(map);
     state.regionFillLayers.push(c);
   }
@@ -313,7 +465,35 @@ function updateRegionLabels() {
   state.regionLabels.forEach(t => map.removeLayer(t));
   state.regionLabels = [];
   const zoom = map.getZoom();
-  // Hidden at world view, fade in as you zoom in. Below zoom 5 = nothing.
+  // Below zoom 4 nothing; above, bigger regions appear sooner than smaller ones
+  if (zoom < 4) return;
+
+  // If we have polygons, label them by their centroid.
+  // A region shows up when (zoom + log2(km_span/100)) >= 6 — smaller regions need more zoom.
+  if (state.regionFillLayers.length && state.regionFillLayers[0]._labelCenter) {
+    const fontSize = Math.min(14, 9 + (zoom - 4));
+    for (const layer of state.regionFillLayers) {
+      if (!layer._labelCenter) continue;
+      const span = layer._labelSpan || 150;
+      const visibilityScore = zoom + Math.log2(span / 100);
+      if (visibilityScore < 6.5) continue; // too small at this zoom
+      const t = L.marker(layer._labelCenter, {
+        icon: L.divIcon({
+          className: 'region-label',
+          html: `<span style="font-size:${fontSize}px">${escapeHtml(layer._labelName)}</span>`,
+          iconSize: null,
+          iconAnchor: [0, 0],
+        }),
+        interactive: false,
+        keyboard: false,
+        pane: 'regionLabels',
+      }).addTo(map);
+      state.regionLabels.push(t);
+    }
+    return;
+  }
+
+  // Fallback: label by wine dot clusters (when polygons unavailable)
   if (zoom < 5) return;
   const visibleWines = (state.member && state.memberView === 'mine')
     ? state.member.purchases.filter(w => w.lat != null).filter(passesFilters)
@@ -324,22 +504,13 @@ function updateRegionLabels() {
     if (!byLocation.has(key)) byLocation.set(key, { lat: w.lat, lng: w.lng, region: w.region, count: 0 });
     byLocation.get(key).count++;
   }
-  // At zoom 5 show only the top regions by wine count; more appear as you zoom in.
   const limit = zoom <= 5 ? 12 : zoom <= 6 ? 28 : zoom <= 7 ? 60 : 200;
   const clusters = [...byLocation.values()].sort((a, b) => b.count - a.count).slice(0, limit);
-  // Font scales with zoom for a more "map label" feel
   const fontSize = Math.min(13, 9 + (zoom - 5));
   for (const c of clusters) {
     const t = L.marker([c.lat, c.lng], {
-      icon: L.divIcon({
-        className: 'region-label',
-        html: `<span style="font-size:${fontSize}px">${escapeHtml(c.region)}</span>`,
-        iconSize: null,
-        iconAnchor: [0, -8],
-      }),
-      interactive: false,
-      keyboard: false,
-      pane: 'regionLabels',
+      icon: L.divIcon({ className: 'region-label', html: `<span style="font-size:${fontSize}px">${escapeHtml(c.region)}</span>`, iconSize: null, iconAnchor: [0, -8] }),
+      interactive: false, keyboard: false, pane: 'regionLabels',
     }).addTo(map);
     state.regionLabels.push(t);
   }
