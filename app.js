@@ -148,7 +148,7 @@ const state = {
 // ---------- Init ----------
 const map = L.map('map', { worldCopyJump: true, minZoom: 2, zoomControl: true })
   .setView([35, 5], 3);
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
   attribution: '&copy; OpenStreetMap &copy; CARTO',
   subdomains: 'abcd',
   maxZoom: 19,
@@ -550,7 +550,7 @@ function updateRegionLabels() {
       if (!layer._labelCenter) continue;
       const span = layer._labelSpan || 150;
       const visibilityScore = zoom + Math.log2(span / 100);
-      if (visibilityScore < 6.5) continue; // too small at this zoom
+      if (visibilityScore < 5.0) continue; // too small at this zoom
       const t = L.marker(layer._labelCenter, {
         icon: L.divIcon({
           className: 'region-label',
