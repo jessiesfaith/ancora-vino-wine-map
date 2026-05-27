@@ -742,13 +742,44 @@ for (const entry of raw) {
   wines.push(parsed);
 }
 
-// Add a search URL for each wine — ancoravino.wine search page accepts a keyword query.
+// Load productId lookup (scraped separately from the shop)
+let productIdMap = new Map();
+const productIdsPath = path.join(__dirname, 'product-ids.json');
+if (fs.existsSync(productIdsPath)) {
+  const pairs = JSON.parse(fs.readFileSync(productIdsPath, 'utf8'));
+  for (const [name, id] of pairs) productIdMap.set(normName(name), id);
+}
+function normName(s) {
+  return String(s).toLowerCase().replace(/[‘’'"„«»“”]/g, '').replace(/\s+/g, ' ').trim();
+}
+
 function buildSearchUrl(name) {
-  // Strip quotes and vintage punctuation, encode for URL
   const cleaned = name.replace(/[‘’'"„«»“”]/g, '').replace(/\s+/g, ' ').trim();
   return 'https://ancoravino.wine/products/search?keyword=' + encodeURIComponent(cleaned);
 }
-wines.forEach(w => { w.shopUrl = buildSearchUrl((w.vintage ? w.vintage + ' ' : '') + w.name); });
+function buildProductUrl(productId) {
+  return 'https://ancoravino.wine/products/p' + productId;
+}
+// Ecwid cart-add deep link — opens shop, adds the item, shows cart.
+// Format: /cart#!/~/cart/add/product/PRODUCT_ID
+function buildCartAddUrl(productId) {
+  return 'https://ancoravino.wine/products/cart#!/~/cart/add/product/' + productId;
+}
+
+wines.forEach(w => {
+  const fullName = (w.vintage ? w.vintage + ' ' : '') + w.name;
+  const productId = productIdMap.get(normName(fullName));
+  if (productId) {
+    w.productId = productId;
+    w.shopUrl = buildProductUrl(productId);
+    w.cartUrl = buildCartAddUrl(productId);
+  } else {
+    w.shopUrl = buildSearchUrl(fullName);
+    w.cartUrl = null;
+  }
+});
+const matched = wines.filter(w => w.productId).length;
+console.log(`Product IDs matched: ${matched} / ${wines.length}`);
 
 fs.writeFileSync(path.join(__dirname, 'wines.json'), JSON.stringify(wines, null, 2));
 fs.writeFileSync(

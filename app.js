@@ -7,37 +7,20 @@ const STORAGE_KEY = 'ancora-map-member';
 const CART_KEY = 'ancora-map-cart';
 const DEFAULT_VIEW = { center: [35, 5], zoom: 3 };
 
-// Wine-producing countries — each gets its own warm earth-tone fill so
-// adjacent countries are visually distinguishable on the map.
-// Keys match the "ADMIN" property in the Natural Earth countries GeoJSON.
-const COUNTRY_COLORS = {
-  'Italy':                    '#7a4226',
-  'France':                   '#8e5a3c',
-  'Spain':                    '#9a6b3f',
-  'Portugal':                 '#6b3d2c',
-  'Germany':                  '#5e4a3a',
-  'Austria':                  '#7e6b4a',
-  'Greece':                   '#8a6a3c',
-  'Hungary':                  '#6a4c3a',
-  'United States of America': '#7a5044',
-  'Argentina':                '#8c4a3c',
-  'Uruguay':                  '#6f3e34',
-  'Mexico':                   '#a06340',
-  'South Africa':             '#7b4d35',
-  'New Zealand':              '#5d4a3e',
-  'Australia':                '#9a5a3e',
-  'United Kingdom':           '#5a4838',
-  'Lebanon':                  '#8a5538',
-  'Armenia':                  '#704630',
-  'Bosnia and Herz.':         '#6c4a36',
-  'Croatia':                  '#7d5638',
-  'Georgia':                  '#856244',
-  'Cyprus':                   '#a86b3a',
-  'Chile':                    '#6e3f30',
-  'Slovenia':                 '#6e5440',
-  'Switzerland':              '#785a44',
-};
-const WINE_COUNTRIES = new Set(Object.keys(COUNTRY_COLORS));
+// Color palette for wine regions — cycled by hash of region name so the same
+// region always gets the same color, and adjacent regions tend to differ.
+const REGION_PALETTE = [
+  '#9c4a2e', '#6b3a52', '#5a6a3e', '#a8763d', '#4a5e7a', '#7e3e5a',
+  '#8a5230', '#3d6a5e', '#a85e3c', '#5e4a8a', '#7a5a2e', '#4a7e5e',
+  '#8e3e6a', '#3e5a7e', '#a86b3a', '#7e4a3d', '#5e7a4a', '#6b3e7e',
+  '#8a4a5e', '#3e7a6b', '#a87a4a', '#5a4a3e', '#7e6b3a', '#4a5e3e',
+  '#8e5a4a', '#3e4a6b', '#a8463a', '#5e7e6b', '#7e3e3a', '#4a6b5e',
+];
+function regionColor(name) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = ((h * 31) + name.charCodeAt(i)) >>> 0;
+  return REGION_PALETTE[h % REGION_PALETTE.length];
+}
 // Our catalog labels USA wines as "California" / "Oregon" etc with country "California"/"Oregon"/"New York"/"Washington" — normalize for country polygon match.
 const COUNTRY_TO_POLYGON = {
   California: 'United States of America',
@@ -72,10 +55,15 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
   subdomains: 'abcd',
   maxZoom: 19,
 }).addTo(map);
-// Custom pane for region labels — sits above country polygons but below the dots.
+// Custom panes — z-index order: regionFills (350) < labels (450) < dots (550)
+map.createPane('regionFills');
+map.getPane('regionFills').style.zIndex = 350;
+map.getPane('regionFills').style.pointerEvents = 'none';
 map.createPane('regionLabels');
 map.getPane('regionLabels').style.zIndex = 450;
 map.getPane('regionLabels').style.pointerEvents = 'none';
+map.createPane('wineDots');
+map.getPane('wineDots').style.zIndex = 550;
 
 (function init() {
   state.wines = (window.WINES || []).filter(w => w.lat != null && w.lng != null);
@@ -89,6 +77,7 @@ map.getPane('regionLabels').style.pointerEvents = 'none';
   wireChat();
   wireWineModal();
   wireResetZoom();
+  wireResetFilters();
   renderMemberCtl();
   render(true);
   map.on('zoomend', updateRegionLabels);
@@ -98,31 +87,31 @@ map.getPane('regionLabels').style.pointerEvents = 'none';
   });
 })();
 
-// ---------- Country polygon coloring ----------
+// ---------- Region coloring (semi-transparent circles per wine region) ----------
+let regionFillLayers = [];
 function loadCountryLayer() {
-  // World countries GeoJSON — Natural Earth 110m (~200KB, fast to load)
-  fetch('https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_110m_admin_0_countries.geojson')
-    .then(r => r.json())
-    .then(geo => {
-      L.geoJSON(geo, {
-        style: feature => {
-          const p = feature.properties || {};
-          const name = p.ADMIN || p.NAME || p.name;
-          const color = COUNTRY_COLORS[name];
-          if (color) {
-            return {
-              fillColor: color,
-              weight: 0.6,
-              color: '#2a1d1f',
-              fillOpacity: 0.7,
-            };
-          }
-          return { fillColor: '#0c0709', weight: 0.3, color: '#1f1418', fillOpacity: 0.25 };
-        },
-        interactive: false,
-      }).addTo(map);
-    })
-    .catch(err => console.warn('Country layer failed to load:', err));
+  // Compute one circle per unique (region, country) combo from the data.
+  // Radius is fixed; overlaps are fine — they create blended color where regions cluster.
+  const regionCenters = new Map();
+  for (const w of state.wines) {
+    if (w.lat == null) continue;
+    const key = `${w.region}|${w.country}`;
+    if (!regionCenters.has(key)) regionCenters.set(key, { lat: w.lat, lng: w.lng, region: w.region, country: w.country });
+  }
+  regionFillLayers.forEach(l => map.removeLayer(l));
+  regionFillLayers = [];
+  for (const r of regionCenters.values()) {
+    const c = L.circle([r.lat, r.lng], {
+      radius: 65000, // 65 km — visible at country zoom, blends nicely
+      fillColor: regionColor(r.region),
+      color: regionColor(r.region),
+      weight: 0,
+      fillOpacity: 0.42,
+      pane: 'regionFills',
+      interactive: false,
+    }).addTo(map);
+    regionFillLayers.push(c);
+  }
 }
 
 // ---------- Filters ----------
@@ -280,8 +269,9 @@ function render(fitBounds) {
       fillColor: color,
       color: isPurchased ? '#fff7c2' : '#fff',
       weight: isPurchased ? 3 : 1.5,
-      opacity: 0.92,
-      fillOpacity: 0.78,
+      opacity: 0.95,
+      fillOpacity: 0.92,
+      pane: 'wineDots',
     }).addTo(map);
     marker._cluster = cluster;
     marker.bindPopup(() => buildPopup(cluster), { maxWidth: 360, maxHeight: 380 });
@@ -562,10 +552,17 @@ function wireWineModal() {
     if (e.target === modal) modal.classList.remove('open');
   });
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') {
+    if (e.key !== 'Escape') return;
+    const anyOpen = modal.classList.contains('open')
+      || document.getElementById('chatPanel').classList.contains('open')
+      || document.getElementById('loginModal').classList.contains('open');
+    if (anyOpen) {
       modal.classList.remove('open');
       document.getElementById('chatPanel').classList.remove('open');
       document.getElementById('loginModal').classList.remove('open');
+    } else {
+      // No modal — reset the map zoom
+      resetZoom();
     }
   });
   // Wire popup wine clicks → open wine card
@@ -610,7 +607,7 @@ function showWineCard(w) {
     <div class="wc-stock ${stockCls}">${stockText}</div>
     <div class="wc-actions">
       <button class="wc-btn primary" id="wcAddBtn"${isSold ? ' disabled' : ''}>${isSold ? 'Sold out' : 'Add to cart'}</button>
-      <a class="wc-btn secondary" href="${escapeAttr(shopUrl)}" target="_blank" rel="noopener">View on Ancora Vino →</a>
+      <a class="wc-btn secondary" href="${escapeAttr(w.cartUrl || shopUrl)}" target="_blank" rel="noopener">${w.cartUrl && !isSold ? 'Buy on Ancora Vino' : 'View on Ancora Vino'} →</a>
     </div>
   `;
   modal.classList.add('open');
@@ -647,20 +644,49 @@ function renderCartBadge() {
   renderMemberCtl();
 }
 
-// ---------- Reset zoom ----------
+// ---------- Reset zoom — go all the way out ----------
+function resetZoom() {
+  map.flyTo([20, 0], 2, { duration: 0.6 });
+}
 function wireResetZoom() {
-  const btn = document.getElementById('resetZoom');
-  btn.addEventListener('click', () => {
-    // Compute fit-bounds of currently visible wines
-    const visible = (state.member && state.memberView === 'mine')
-      ? state.member.purchases.filter(w => w.lat != null).filter(passesFilters)
-      : state.wines.filter(passesFilters);
-    if (visible.length) {
-      const bounds = visible.map(w => [w.lat, w.lng]);
-      map.fitBounds(bounds, { padding: [40, 40], maxZoom: 5 });
-    } else {
-      map.setView(DEFAULT_VIEW.center, DEFAULT_VIEW.zoom);
-    }
+  document.getElementById('resetZoom').addEventListener('click', resetZoom);
+}
+
+// ---------- Reset filters ----------
+function wireResetFilters() {
+  document.getElementById('resetFiltersBtn').addEventListener('click', () => {
+    // Clear every selected filter
+    for (const k of Object.keys(state.filters)) state.filters[k].clear();
+    // Reset group searches
+    for (const k of Object.keys(state.groupSearch)) state.groupSearch[k] = '';
+    // Reset availability toggles to defaults
+    state.availability = { available: true, preorder: true, sold: false };
+    // Reset price slider
+    state.maxPrice = 600;
+    const priceRange = document.getElementById('priceRange');
+    if (priceRange) priceRange.value = 600;
+    const priceLabel = document.getElementById('priceLabel');
+    if (priceLabel) priceLabel.textContent = 'any';
+    // Reset all per-group search inputs in the DOM
+    ['regionSearch', 'grapeSearch', 'producerSearch'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+    // Re-render filter groups (just the inner content — don't re-attach static listeners)
+    renderFilterGroup('filter-type', 'type', countBy(state.wines, w => [w.type]));
+    renderFilterGroup('filter-country', 'country', countBy(state.wines, w => [w.country]));
+    renderFilterGroup('filter-region', 'region', countBy(state.wines, w => [w.region]));
+    renderFilterGroup('filter-grape', 'grape', countBy(state.wines, w => w.grapes.length ? w.grapes : []));
+    renderFilterGroup('filter-producer', 'producer', countBy(state.wines, w => w.producer ? [w.producer] : []));
+    renderFilterGroup('filter-body', 'body', countBy(state.wines, w => [w.body]));
+    const vintageEntries = countBy(state.wines, w => w.vintage != null ? [String(w.vintage)] : [])
+      .sort((a, b) => { const an = parseInt(a[0], 10), bn = parseInt(b[0], 10); if (isNaN(an) && isNaN(bn)) return 0; if (isNaN(an)) return 1; if (isNaN(bn)) return -1; return bn - an; });
+    renderFilterGroup('filter-vintage', 'vintage', vintageEntries);
+    // Sync availability button visual state
+    document.querySelectorAll('.toggle-btn[data-toggle]').forEach(btn => {
+      btn.classList.toggle('on', state.availability[btn.dataset.toggle]);
+    });
+    render(false);
   });
 }
 
