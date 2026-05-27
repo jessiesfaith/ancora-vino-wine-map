@@ -7,19 +7,38 @@ const STORAGE_KEY = 'ancora-map-member';
 const CART_KEY = 'ancora-map-cart';
 const DEFAULT_VIEW = { center: [35, 5], zoom: 3 };
 
-// Color palette for wine regions — cycled by hash of region name so the same
-// region always gets the same color, and adjacent regions tend to differ.
-const REGION_PALETTE = [
-  '#9c4a2e', '#6b3a52', '#5a6a3e', '#a8763d', '#4a5e7a', '#7e3e5a',
-  '#8a5230', '#3d6a5e', '#a85e3c', '#5e4a8a', '#7a5a2e', '#4a7e5e',
-  '#8e3e6a', '#3e5a7e', '#a86b3a', '#7e4a3d', '#5e7a4a', '#6b3e7e',
-  '#8a4a5e', '#3e7a6b', '#a87a4a', '#5a4a3e', '#7e6b3a', '#4a5e3e',
-  '#8e5a4a', '#3e4a6b', '#a8463a', '#5e7e6b', '#7e3e3a', '#4a6b5e',
-];
-function regionColor(name) {
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = ((h * 31) + name.charCodeAt(i)) >>> 0;
-  return REGION_PALETTE[h % REGION_PALETTE.length];
+// Small distinct palette — greedy graph coloring picks one of these per region
+// such that no two regions within NEIGHBOR_KM of each other share a color.
+const REGION_PALETTE = ['#a8463a', '#3d6a5e', '#a8763d', '#4a5e7a', '#7e3e5a', '#5a6a3e', '#8e5a4a', '#3e7a6b'];
+const NEIGHBOR_KM = 350; // regions closer than this count as neighbors for coloring purposes
+
+function kmBetween(lat1, lng1, lat2, lng2) {
+  const R = 6371;
+  const toRad = d => d * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat/2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng/2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// Computes a stable color per region using greedy coloring on the proximity graph.
+// Returns a Map<region, color>.
+function computeRegionColors(regionCenters) {
+  const regions = [...regionCenters.entries()]
+    .map(([key, c]) => ({ key, ...c }))
+    // Process by latitude (north→south) for a deterministic order
+    .sort((a, b) => b.lat - a.lat || a.lng - b.lng);
+  const colorMap = new Map();
+  for (const r of regions) {
+    const used = new Set();
+    for (const [otherKey, otherColor] of colorMap.entries()) {
+      const other = regionCenters.get(otherKey);
+      if (kmBetween(r.lat, r.lng, other.lat, other.lng) < NEIGHBOR_KM) used.add(otherColor);
+    }
+    const color = REGION_PALETTE.find(c => !used.has(c)) || REGION_PALETTE[regions.indexOf(r) % REGION_PALETTE.length];
+    colorMap.set(r.key, color);
+  }
+  return colorMap;
 }
 // Our catalog labels USA wines as "California" / "Oregon" etc with country "California"/"Oregon"/"New York"/"Washington" — normalize for country polygon match.
 const COUNTRY_TO_POLYGON = {
@@ -45,6 +64,7 @@ const state = {
   highlightWineKey: null, // when search picks one, draw extra ring
   cart: [], // demo cart: [{ name, vintage, priceUSD, qty }]
   hasUserPannedOrZoomed: false,
+  state.regionFillLayers: [],
 };
 
 // ---------- Init ----------
@@ -88,29 +108,29 @@ map.getPane('wineDots').style.zIndex = 550;
 })();
 
 // ---------- Region coloring (semi-transparent circles per wine region) ----------
-let regionFillLayers = [];
 function loadCountryLayer() {
-  // Compute one circle per unique (region, country) combo from the data.
-  // Radius is fixed; overlaps are fine — they create blended color where regions cluster.
   const regionCenters = new Map();
   for (const w of state.wines) {
     if (w.lat == null) continue;
     const key = `${w.region}|${w.country}`;
     if (!regionCenters.has(key)) regionCenters.set(key, { lat: w.lat, lng: w.lng, region: w.region, country: w.country });
   }
-  regionFillLayers.forEach(l => map.removeLayer(l));
-  regionFillLayers = [];
-  for (const r of regionCenters.values()) {
+  const colorMap = computeRegionColors(regionCenters);
+  state.regionColorMap = colorMap;
+  state.regionFillLayers.forEach(l => map.removeLayer(l));
+  state.regionFillLayers = [];
+  for (const [key, r] of regionCenters.entries()) {
+    const color = colorMap.get(key);
     const c = L.circle([r.lat, r.lng], {
-      radius: 65000, // 65 km — visible at country zoom, blends nicely
-      fillColor: regionColor(r.region),
-      color: regionColor(r.region),
+      radius: 120000, // 120 km — bigger fills, less fragmented
+      fillColor: color,
+      color: color,
       weight: 0,
-      fillOpacity: 0.42,
+      fillOpacity: 0.55,
       pane: 'regionFills',
       interactive: false,
     }).addTo(map);
-    regionFillLayers.push(c);
+    state.regionFillLayers.push(c);
   }
 }
 
@@ -335,20 +355,19 @@ function buildPopup(cluster) {
     if (aSold !== bSold) return aSold - bSold;
     return a.priceUSD - b.priceUSD;
   });
-  const winesHtml = sorted.map((w, i) => {
+  const winesHtml = sorted.map(w => {
     const statusBadge = statusToBadge(w.status);
     const memberBadge = purchaseKeys.has(normalizeName(w.name)) ? ' <span class="popup-status member">YOURS</span>' : '';
     const grapeStr = w.grapes && w.grapes.length ? w.grapes.join(', ') : '—';
+    const lookupKey = w.productId || normalizeName((w.vintage ? w.vintage + ' ' : '') + w.name);
     return `
-      <div class="popup-wine" data-wine-idx="${i}">
+      <div class="popup-wine" data-wine-key="${escapeAttr(lookupKey)}">
         <div class="popup-name">${w.vintage ? w.vintage + ' ' : ''}${escapeHtml(w.name)}${statusBadge}${memberBadge}</div>
         <div class="popup-meta">${escapeHtml(grapeStr)} &middot; ${escapeHtml(w.type)}, ${escapeHtml(w.body || '')} &middot; <span class="popup-price">$${w.priceUSD}</span></div>
         <div class="popup-link">View this wine →</div>
       </div>
     `;
   }).join('');
-  // Stash sorted wines on the cluster so the popup click handler can find them
-  cluster._sortedWines = sorted;
   return `
     <div class="popup-region">${escapeHtml(cluster.region)} &middot; ${escapeHtml(cluster.country)} &middot; ${cluster.wines.length} wine${cluster.wines.length === 1 ? '' : 's'}</div>
     ${winesHtml}
@@ -565,19 +584,23 @@ function wireWineModal() {
       resetZoom();
     }
   });
-  // Wire popup wine clicks → open wine card
-  map.on('popupopen', e => {
-    const cluster = (e.popup._source && e.popup._source._cluster) || null;
-    const popup = e.popup.getElement();
-    if (!popup) return;
-    popup.querySelectorAll('.popup-wine').forEach(el => {
-      el.addEventListener('click', () => {
-        const idx = parseInt(el.dataset.wineIdx, 10);
-        const sorted = cluster && cluster._sortedWines;
-        const wine = sorted ? sorted[idx] : null;
-        if (wine) showWineCard(wine);
+  // Use event delegation on document — survives popup re-renders, no stale references
+  document.body.addEventListener('click', e => {
+    const el = e.target.closest('.popup-wine[data-wine-key]');
+    if (!el) return;
+    const key = el.dataset.wineKey;
+    // Try productId first (numeric), then normalized name
+    let wine = state.wines.find(w => String(w.productId) === key);
+    if (!wine && state.member) {
+      wine = state.member.purchases.find(w => {
+        const k = w.productId ? String(w.productId) : normalizeName((w.vintage ? w.vintage + ' ' : '') + w.name);
+        return k === key;
       });
-    });
+    }
+    if (!wine) {
+      wine = state.wines.find(w => normalizeName((w.vintage ? w.vintage + ' ' : '') + w.name) === key);
+    }
+    if (wine) showWineCard(wine);
   });
 }
 
