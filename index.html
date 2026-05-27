@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Ancora Vino Wine Map</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  :root {
+    --bg: #1a1417;
+    --panel: #241b1f;
+    --panel-2: #2e2329;
+    --border: #3a2c33;
+    --text: #f3ece8;
+    --muted: #b8a59d;
+    --accent: #b8324a;
+    --accent-2: #d96a82;
+    --gold: #c9a76b;
+    --red: #b8324a;
+    --white: #e8d27a;
+    --rose: #e08aa3;
+    --sparkling: #6fb3c9;
+    --sweet: #c794d6;
+    --orange: #d68a3a;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; overflow: hidden; }
+
+  #topbar { position: fixed; top: 0; left: 0; right: 0; height: 56px; background: rgba(20,15,17,0.92); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 16px; z-index: 1000; gap: 16px; }
+  #topbar .brand { font-weight: 700; letter-spacing: 1.2px; font-size: 16px; color: var(--gold); text-transform: uppercase; }
+  #topbar .brand span { color: var(--text); font-weight: 400; }
+  #topSearch { flex: 1; max-width: 480px; position: relative; }
+  #topSearch input { width: 100%; padding: 9px 14px 9px 36px; background: var(--panel); border: 1px solid var(--border); color: var(--text); border-radius: 22px; font: inherit; }
+  #topSearch input:focus { outline: none; border-color: var(--accent); }
+  #topSearch::before { content: '⌕'; position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 17px; }
+  #topSearch .results { position: absolute; top: 100%; left: 0; right: 0; margin-top: 6px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; max-height: 360px; overflow-y: auto; display: none; z-index: 1001; }
+  #topSearch.open .results { display: block; }
+  #topSearch .result { padding: 9px 14px; cursor: pointer; border-bottom: 1px solid var(--border); font-size: 13px; }
+  #topSearch .result:last-child { border-bottom: none; }
+  #topSearch .result:hover, #topSearch .result.active { background: var(--panel-2); }
+  #topSearch .result-meta { color: var(--muted); font-size: 11px; margin-top: 2px; }
+
+  #memberCtl { display: flex; align-items: center; gap: 10px; }
+  #memberBtn { background: var(--accent); border: none; color: white; padding: 8px 18px; border-radius: 18px; cursor: pointer; font: inherit; font-weight: 600; font-size: 12px; letter-spacing: 0.5px; }
+  #memberBtn:hover { background: var(--accent-2); }
+  .member-name { font-size: 12px; color: var(--muted); }
+  .member-name b { color: var(--gold); }
+  .member-toggle { display: flex; gap: 4px; background: var(--panel); padding: 2px; border-radius: 16px; border: 1px solid var(--border); }
+  .member-toggle button { background: transparent; border: none; color: var(--muted); padding: 5px 12px; border-radius: 14px; cursor: pointer; font: inherit; font-size: 11px; }
+  .member-toggle button.on { background: var(--accent); color: white; }
+
+  #app { display: grid; grid-template-columns: 320px 1fr; height: 100vh; padding-top: 56px; }
+  #sidebar { background: var(--panel); border-right: 1px solid var(--border); overflow-y: auto; padding: 16px; }
+  #map { height: calc(100vh - 56px); }
+  h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 1.2px; color: var(--muted); margin: 18px 0 6px; display: flex; align-items: center; }
+  .tag-line { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
+  .filter-group { display: flex; flex-direction: column; gap: 2px; max-height: 220px; overflow-y: auto; padding-right: 4px; }
+  .filter-row { display: flex; align-items: center; gap: 8px; padding: 3px 6px; border-radius: 4px; cursor: pointer; font-size: 13px; }
+  .filter-row:hover { background: var(--panel-2); }
+  .filter-row input { accent-color: var(--accent); cursor: pointer; }
+  .filter-row .count { margin-left: auto; color: var(--muted); font-size: 11px; }
+  .clear-btn { background: none; border: 1px solid var(--border); color: var(--muted); padding: 2px 8px; border-radius: 4px; font-size: 10px; cursor: pointer; margin-left: auto; text-transform: none; letter-spacing: 0; }
+  .clear-btn:hover { color: var(--text); border-color: var(--accent); }
+  .stat-line { color: var(--muted); font-size: 12px; margin: 4px 0 12px; }
+  .stat-line b { color: var(--text); }
+  .price-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+  .price-row input[type=range] { width: 100%; accent-color: var(--accent); }
+  .search-input { width: 100%; padding: 6px 10px; background: var(--panel-2); border: 1px solid var(--border); color: var(--text); border-radius: 4px; font: inherit; font-size: 12px; }
+  .search-input:focus { outline: none; border-color: var(--accent); }
+  .toggle-row { display: flex; gap: 6px; margin-bottom: 8px; }
+  .toggle-btn { flex: 1; background: var(--panel-2); border: 1px solid var(--border); color: var(--muted); padding: 5px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; }
+  .toggle-btn.on { background: var(--accent); border-color: var(--accent); color: white; }
+
+  .leaflet-popup-content-wrapper { background: var(--panel); color: var(--text); border-radius: 8px; max-height: 380px; overflow-y: auto; box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
+  .leaflet-popup-content { margin: 14px 16px; font-size: 13px; min-width: 240px; }
+  .leaflet-popup-tip { background: var(--panel); }
+  .leaflet-container { background: #0f0a0c; }
+
+  .popup-region { font-size: 11px; text-transform: uppercase; letter-spacing: 1.4px; color: var(--gold); margin-bottom: 8px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  .popup-wine { margin: 8px 0; padding: 8px 10px; border-radius: 5px; background: var(--panel-2); display: block; color: inherit; text-decoration: none; transition: background 0.15s; cursor: pointer; }
+  .popup-wine:hover { background: var(--border); }
+  .popup-name { font-weight: 600; color: var(--text); }
+  .popup-meta { color: var(--muted); font-size: 11px; margin-top: 3px; }
+  .popup-price { color: var(--accent-2); font-weight: 600; }
+  .popup-link { color: var(--gold); font-size: 11px; margin-top: 4px; }
+  .popup-status { display: inline-block; font-size: 9px; padding: 1px 6px; border-radius: 3px; margin-left: 5px; vertical-align: 1px; letter-spacing: 0.5px; }
+  .popup-status.sold { background: #5a2a30; color: #f3b8c2; }
+  .popup-status.pre { background: #2a4a5a; color: #b8d8f0; }
+  .popup-status.sale { background: #5a4a2a; color: #f0dcb8; }
+  .popup-status.member { background: #4a3a5a; color: #d8b8f0; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 10px; font-size: 11px; color: var(--muted); margin-bottom: 14px; }
+  .legend-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 4px; vertical-align: middle; }
+
+  .region-label { background: rgba(20,15,17,0.78); color: var(--gold); border: none; box-shadow: none; padding: 2px 6px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.7px; border-radius: 3px; white-space: nowrap; pointer-events: none; }
+  .region-label::before { display: none; }
+
+  /* Login modal */
+  #loginModal { position: fixed; inset: 0; background: rgba(0,0,0,0.78); z-index: 2000; display: none; align-items: center; justify-content: center; padding: 24px; }
+  #loginModal.open { display: flex; }
+  .login-card { background: white; color: #1a1a1a; border-radius: 8px; max-width: 880px; width: 100%; padding: 36px 40px; display: grid; grid-template-columns: 1fr 1fr; gap: 36px; position: relative; }
+  .login-card .close { position: absolute; top: 12px; right: 16px; background: none; border: none; font-size: 22px; cursor: pointer; color: #999; }
+  .login-card h2 { color: #1a1a1a; font-size: 26px; margin: 0 0 4px; text-transform: none; letter-spacing: 0; }
+  .login-card .breadcrumb { color: #888; font-size: 14px; margin-bottom: 18px; }
+  .login-card .guest { display: flex; gap: 10px; align-items: center; padding: 14px 0; border-bottom: 1px solid #eee; margin-bottom: 18px; }
+  .login-card .guest-icon { width: 36px; height: 36px; border-radius: 50%; background: #eee; display: flex; align-items: center; justify-content: center; color: #666; }
+  .login-card .guest-text { font-size: 13px; }
+  .login-card .guest-text b { display: block; color: #1a1a1a; }
+  .login-card .guest-text a { color: #2255aa; }
+  .login-card h3 { font-size: 14px; margin: 16px 0 8px; color: #1a1a1a; }
+  .login-card ul.legal { list-style: none; padding: 0; }
+  .login-card ul.legal li a { color: #2255aa; text-decoration: none; font-size: 13px; line-height: 1.8; }
+  .login-side h2 { font-size: 22px; margin-bottom: 4px; }
+  .login-side .bullets { color: #444; font-size: 13px; margin-bottom: 16px; }
+  .login-side .bullets span:not(:last-child)::after { content: ' • '; color: #aaa; }
+  .login-side p { color: #555; font-size: 13px; line-height: 1.5; margin: 0 0 18px; }
+  .login-side input { width: 100%; padding: 12px 14px; border: 1px solid #ddd; border-radius: 4px; font: inherit; font-size: 14px; margin-bottom: 12px; }
+  .login-side input:focus { outline: none; border-color: #2255aa; box-shadow: 0 0 0 3px rgba(34,85,170,0.15); }
+  .login-side button.continue { width: 100%; padding: 14px; background: #1a1a1a; color: white; border: none; border-radius: 4px; font: inherit; font-weight: 600; font-size: 14px; cursor: pointer; }
+  .login-side button.continue:hover { background: #333; }
+  .login-side .demo-note { font-size: 11px; color: #888; margin-top: 12px; padding: 10px; background: #f7f4ee; border-radius: 4px; line-height: 1.5; }
+  .login-side .demo-note b { color: #1a1a1a; }
+  .login-side .demo-note code { background: white; padding: 1px 5px; border-radius: 3px; font-size: 11px; }
+  .login-side .terms { font-size: 12px; color: #555; margin-top: 14px; }
+  .login-side .terms a { color: #2255aa; }
+
+  /* Chatbot */
+  #chatFab { position: fixed; right: 20px; bottom: 20px; width: 56px; height: 56px; border-radius: 50%; background: var(--accent); color: white; border: none; cursor: pointer; box-shadow: 0 6px 20px rgba(0,0,0,0.4); font-size: 24px; z-index: 1100; display: flex; align-items: center; justify-content: center; }
+  #chatFab:hover { background: var(--accent-2); transform: scale(1.05); transition: 0.15s; }
+  #chatPanel { position: fixed; right: 20px; bottom: 90px; width: 380px; height: 560px; max-height: calc(100vh - 130px); background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 12px 32px rgba(0,0,0,0.55); display: none; flex-direction: column; z-index: 1100; overflow: hidden; }
+  #chatPanel.open { display: flex; }
+  .chat-header { background: var(--panel-2); padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; }
+  .chat-header .avatar { width: 30px; height: 30px; border-radius: 50%; background: var(--accent); color: white; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; }
+  .chat-header b { font-size: 14px; }
+  .chat-header .sub { color: var(--muted); font-size: 11px; }
+  .chat-header .close-x { margin-left: auto; background: none; border: none; color: var(--muted); font-size: 18px; cursor: pointer; }
+  .chat-body { flex: 1; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+  .chat-msg { max-width: 88%; padding: 9px 13px; border-radius: 12px; font-size: 13px; line-height: 1.4; }
+  .chat-msg.user { background: var(--accent); color: white; align-self: flex-end; border-bottom-right-radius: 3px; }
+  .chat-msg.bot { background: var(--panel-2); color: var(--text); align-self: flex-start; border-bottom-left-radius: 3px; }
+  .chat-wines { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+  .chat-wine-card { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 9px 11px; cursor: pointer; transition: 0.15s; }
+  .chat-wine-card:hover { border-color: var(--accent-2); background: var(--panel-2); }
+  .chat-wine-card .n { font-weight: 600; font-size: 12px; }
+  .chat-wine-card .m { color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .chat-wine-card .p { color: var(--accent-2); font-weight: 600; font-size: 11px; float: right; }
+  .chat-suggestions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .chat-chip { background: transparent; border: 1px solid var(--border); color: var(--muted); padding: 4px 10px; border-radius: 12px; cursor: pointer; font-size: 11px; }
+  .chat-chip:hover { color: var(--text); border-color: var(--accent); }
+  .chat-input-row { padding: 10px 12px; border-top: 1px solid var(--border); display: flex; gap: 8px; }
+  .chat-input-row input { flex: 1; padding: 9px 12px; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 18px; font: inherit; font-size: 13px; }
+  .chat-input-row input:focus { outline: none; border-color: var(--accent); }
+  .chat-input-row button { background: var(--accent); color: white; border: none; border-radius: 50%; width: 36px; height: 36px; cursor: pointer; flex: 0 0 36px; font-size: 16px; }
+  .chat-input-row button:hover { background: var(--accent-2); }
+
+  .toast { position: fixed; top: 70px; right: 16px; background: white; color: #1a1a1a; padding: 14px 18px; border-radius: 6px; box-shadow: 0 8px 28px rgba(0,0,0,0.4); display: flex; gap: 12px; align-items: flex-start; max-width: 340px; z-index: 1500; }
+  .toast .icon { width: 22px; height: 22px; border-radius: 50%; background: #ddd; flex: 0 0 22px; display: flex; align-items: center; justify-content: center; font-size: 13px; color: #666; }
+  .toast b { display: block; margin-bottom: 2px; }
+  .toast small { color: #666; font-size: 12px; }
+
+  @media (max-width: 760px) {
+    #app { grid-template-columns: 1fr; }
+    #sidebar { display: none; }
+    .login-card { grid-template-columns: 1fr; padding: 24px 20px; }
+    #topSearch { max-width: none; }
+    .member-name { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="brand">Ancora <span>Vino Map</span></div>
+  <div id="topSearch">
+    <input id="topSearchInput" placeholder="Search a wine, producer, region, or grape&hellip;" autocomplete="off" />
+    <div class="results" id="topSearchResults"></div>
+  </div>
+  <div id="memberCtl"></div>
+</div>
+
+<div id="app">
+  <aside id="sidebar">
+    <div class="tag-line">441 wines from 30+ regions worldwide.</div>
+    <div class="stat-line"><b id="visibleCount">0</b> of <b id="totalCount">0</b> wines shown</div>
+
+    <div class="legend">
+      <span><span class="legend-dot" style="background:var(--red)"></span>Red</span>
+      <span><span class="legend-dot" style="background:var(--white)"></span>White</span>
+      <span><span class="legend-dot" style="background:var(--rose)"></span>Ros&eacute;</span>
+      <span><span class="legend-dot" style="background:var(--sparkling)"></span>Sparkling</span>
+      <span><span class="legend-dot" style="background:var(--sweet)"></span>Sweet</span>
+      <span><span class="legend-dot" style="background:var(--orange)"></span>Orange</span>
+    </div>
+
+    <h2>Availability</h2>
+    <div class="toggle-row">
+      <button class="toggle-btn on" data-toggle="available">In stock</button>
+      <button class="toggle-btn on" data-toggle="preorder">Pre-order</button>
+      <button class="toggle-btn" data-toggle="sold">Sold out</button>
+    </div>
+
+    <h2>Wine Type <button class="clear-btn" data-clear="type">Clear</button></h2>
+    <div class="filter-group" id="filter-type"></div>
+
+    <h2>Country of Origin <button class="clear-btn" data-clear="country">Clear</button></h2>
+    <div class="filter-group" id="filter-country"></div>
+
+    <h2>Appellation / Region <button class="clear-btn" data-clear="region">Clear</button></h2>
+    <input class="search-input" id="regionSearch" placeholder="Filter regions&hellip;" style="margin-bottom:6px;" />
+    <div class="filter-group" id="filter-region" style="max-height:180px;"></div>
+
+    <h2>Grape Varietal <button class="clear-btn" data-clear="grape">Clear</button></h2>
+    <input class="search-input" id="grapeSearch" placeholder="Filter grapes&hellip;" style="margin-bottom:6px;" />
+    <div class="filter-group" id="filter-grape" style="max-height:180px;"></div>
+
+    <h2>Producer (Domain) <button class="clear-btn" data-clear="producer">Clear</button></h2>
+    <input class="search-input" id="producerSearch" placeholder="Filter producers&hellip;" style="margin-bottom:6px;" />
+    <div class="filter-group" id="filter-producer" style="max-height:180px;"></div>
+
+    <h2>Vintage (Year) <button class="clear-btn" data-clear="vintage">Clear</button></h2>
+    <div class="filter-group" id="filter-vintage" style="max-height:160px;"></div>
+
+    <h2>Body <button class="clear-btn" data-clear="body">Clear</button></h2>
+    <div class="filter-group" id="filter-body"></div>
+
+    <h2>Max price <span id="priceLabel" style="color:var(--text); font-size:12px; margin-left:6px;"></span></h2>
+    <div class="price-row">
+      <span>$0</span>
+      <input type="range" id="priceRange" min="0" max="600" step="5" value="600" />
+      <span>$600</span>
+    </div>
+  </aside>
+  <div id="map"></div>
+</div>
+
+<!-- Login modal styled like ancoravino.wine/products/account -->
+<div id="loginModal">
+  <div class="login-card">
+    <button class="close" id="loginClose">×</button>
+    <div>
+      <h2>Account</h2>
+      <div class="breadcrumb">Home / Store / Account</div>
+      <div class="guest">
+        <div class="guest-icon">👤</div>
+        <div class="guest-text"><b>Guest account</b>You are not signed in</div>
+      </div>
+      <h3>Shopping cart</h3>
+      <div style="color:#777; font-size:13px;">Your shopping cart is empty</div>
+      <h3 style="margin-top:18px;">Favorites</h3>
+      <div style="color:#777; font-size:13px;">You haven't favorited anything yet</div>
+      <h3 style="margin-top:18px;">Legal</h3>
+      <ul class="legal">
+        <li><a href="#">Terms &amp; Conditions</a></li>
+        <li><a href="#">Privacy Policy</a></li>
+        <li><a href="#">Shipping &amp; Payment Info</a></li>
+        <li><a href="#">Return Policy</a></li>
+      </ul>
+    </div>
+    <div class="login-side">
+      <h2>Join us or sign in</h2>
+      <div class="bullets"><span>Track orders</span><span>Check out faster</span><span>Sync favorites</span></div>
+      <p>For a sign-in, we'll send you a one-time code. An account will be automatically created if you don't have one yet.</p>
+      <input id="loginEmail" type="email" placeholder="Email" />
+      <button class="continue" id="loginContinue">Continue</button>
+      <div class="demo-note">
+        <b>Demo mode</b> — try signing in with <code>jessicadougherty4321@gmail.com</code> to see purchased wines highlighted on the map, or <code>demo@ancoravino.wine</code> for a sample member account. No password needed.
+      </div>
+      <div class="terms">By continuing, you accept <a href="#">Terms &amp; Conditions</a>, <a href="#">Privacy Policy</a></div>
+    </div>
+  </div>
+</div>
+
+<!-- Chatbot -->
+<button id="chatFab" title="Ask Ancora">🍷</button>
+<div id="chatPanel">
+  <div class="chat-header">
+    <div class="avatar">A</div>
+    <div>
+      <b>Ask Ancora</b>
+      <div class="sub">Search 441 wines by name, region, grape, or style</div>
+    </div>
+    <button class="close-x" id="chatClose">×</button>
+  </div>
+  <div class="chat-body" id="chatBody"></div>
+  <div class="chat-input-row">
+    <input id="chatInput" placeholder="Try &lsquo;Brunello&rsquo; or &lsquo;Italian red under $40&rsquo;&hellip;" autocomplete="off" />
+    <button id="chatSend">↑</button>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="wines.data.js"></script>
+<script src="jessica.data.js"></script>
+<script src="member-accounts.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
