@@ -521,13 +521,15 @@ function renderMemberCtl() {
     document.getElementById('memberBtn').addEventListener('click', () => document.getElementById('loginModal').classList.add('open'));
   } else {
     const purchaseCount = state.member.purchases.filter(w => w.lat != null).length;
+    const initials = state.member.name.split(/\s+/).map(s => s[0]).join('').slice(0, 2).toUpperCase();
     ctl.innerHTML = `
       ${cartHtml}
       <div class="member-toggle">
         <button data-view="mine" class="${state.memberView === 'mine' ? 'on' : ''}">My wines (${purchaseCount})</button>
         <button data-view="all" class="${state.memberView === 'all' ? 'on' : ''}">All wines</button>
       </div>
-      <div class="member-name"><b>${escapeHtml(state.member.name)}</b> · <a href="#" id="logoutLink" style="color:var(--muted); text-decoration: underline;">Sign out</a></div>
+      <div class="member-name"><span class="avatar" title="${escapeAttr(state.member.email)}">${escapeHtml(initials)}</span><b>${escapeHtml(state.member.name)}</b></div>
+      <button class="sign-out-btn" id="logoutBtn">Sign out</button>
     `;
     ctl.querySelectorAll('.member-toggle button').forEach(b => {
       b.addEventListener('click', () => {
@@ -536,8 +538,7 @@ function renderMemberCtl() {
         render(false); // preserve current zoom
       });
     });
-    document.getElementById('logoutLink').addEventListener('click', e => {
-      e.preventDefault();
+    document.getElementById('logoutBtn').addEventListener('click', () => {
       state.member = null;
       state.memberView = 'all';
       try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
@@ -727,8 +728,8 @@ function wireChat() {
     panel.classList.toggle('open');
     if (panel.classList.contains('open') && !opened) {
       opened = true;
-      botSay(`Hi — I can find any of Ancora Vino's 441 wines for you. Try a name like <i>"Brunello"</i>, a region like <i>"Sicily"</i>, a grape like <i>"Pinot Noir"</i>, or a request like <i>"Italian red under $40"</i>.`,
-        ['Brunello', 'Champagne', 'Pinot Noir under $50', 'Sparkling rosé', 'Show me Sicily']);
+      botSay(`Hi — I can find any of Ancora Vino's 441 wines for you. Try a name like <i>"Sancerre"</i>, a region like <i>"Sicily"</i>, a grape like <i>"Pinot Noir"</i>, or a request like <i>"Italian red under $40"</i>.`,
+        ['Sancerre', 'Pinot Noir', 'Brunello', 'Italian red under $40', 'Champagne']);
     }
     setTimeout(() => input.focus(), 50);
   });
@@ -783,10 +784,84 @@ function wireChat() {
     body.scrollTop = body.scrollHeight;
   }
 
+  // Appellation synonyms — when user says "Brunello" we also search "Montalcino" + "Sangiovese"
+  const SYNONYMS = {
+    brunello: ['montalcino', 'sangiovese'],
+    'vino nobile': ['montepulciano', 'sangiovese'],
+    barolo: ['nebbiolo', 'piedmont', 'piemonte'],
+    barbaresco: ['nebbiolo', 'piedmont', 'piemonte'],
+    chianti: ['tuscany', 'sangiovese'],
+    'super tuscan': ['tuscany', 'cabernet', 'sangiovese'],
+    amarone: ['valpolicella', 'corvina'],
+    ripasso: ['valpolicella', 'corvina'],
+    soave: ['garganega', 'veneto'],
+    prosecco: ['glera', 'veneto'],
+    franciacorta: ['chardonnay', 'lombardy'],
+    sancerre: ['sauvignon blanc', 'loire'],
+    'pouilly-fumé': ['sauvignon blanc', 'loire'],
+    'pouilly-fume': ['sauvignon blanc', 'loire'],
+    'pouilly-fuissé': ['chardonnay', 'burgundy', 'mâcon'],
+    chablis: ['chardonnay', 'burgundy'],
+    bourgogne: ['burgundy', 'pinot noir', 'chardonnay'],
+    sauternes: ['bordeaux', 'sémillon', 'sweet'],
+    'st-émilion': ['bordeaux', 'merlot'],
+    'saint-émilion': ['bordeaux', 'merlot'],
+    pomerol: ['bordeaux', 'merlot'],
+    médoc: ['bordeaux', 'cabernet'],
+    pauillac: ['bordeaux', 'cabernet'],
+    margaux: ['bordeaux', 'cabernet'],
+    'côtes du rhône': ['rhône', 'grenache', 'syrah'],
+    'cotes du rhone': ['rhône', 'grenache', 'syrah'],
+    'châteauneuf': ['rhône', 'grenache'],
+    'côte rôtie': ['rhône', 'syrah'],
+    hermitage: ['rhône', 'syrah'],
+    bandol: ['provence', 'mourvèdre'],
+    beaujolais: ['gamay'],
+    brouilly: ['beaujolais', 'gamay'],
+    fleurie: ['beaujolais', 'gamay'],
+    morgon: ['beaujolais', 'gamay'],
+    vouvray: ['loire', 'chenin blanc'],
+    muscadet: ['loire', 'melon de bourgogne'],
+    cahors: ['malbec'],
+    champagne: ['pinot noir', 'chardonnay', 'pinot meunier'],
+    rioja: ['tempranillo', 'spain'],
+    'ribera del duero': ['tempranillo', 'spain'],
+    priorat: ['garnacha', 'spain'],
+    albariño: ['rías baixas', 'spain'],
+    albarino: ['rías baixas', 'spain'],
+    cava: ['spain', 'sparkling'],
+    porto: ['douro', 'port', 'portugal'],
+    port: ['douro', 'portugal'],
+    'vinho verde': ['portugal', 'alvarinho'],
+    tokaji: ['hungary', 'furmint', 'sweet'],
+    mosel: ['germany', 'riesling'],
+    rheingau: ['germany', 'riesling'],
+    napa: ['california', 'cabernet sauvignon'],
+    sonoma: ['california', 'pinot noir', 'chardonnay'],
+    willamette: ['oregon', 'pinot noir'],
+    'finger lakes': ['new york', 'riesling'],
+    barossa: ['australia', 'shiraz'],
+    marlborough: ['new zealand', 'sauvignon blanc'],
+    'central otago': ['new zealand', 'pinot noir'],
+    mendoza: ['argentina', 'malbec'],
+  };
+
+  function expandQuery(q) {
+    const tokens = new Set([q]);
+    for (const [key, syns] of Object.entries(SYNONYMS)) {
+      if (q.includes(key)) for (const s of syns) tokens.add(s);
+    }
+    return [...tokens];
+  }
+
   // Intent parsing — extracts type, country, region, grape, max price from natural-language query
   function answer(rawQuery) {
     const q = rawQuery.toLowerCase();
     const criteria = {};
+    const synonymsHit = [];
+    for (const [key, syns] of Object.entries(SYNONYMS)) {
+      if (q.includes(key)) synonymsHit.push(...syns);
+    }
 
     // type
     if (/\b(red|reds|rouge|rosso)\b/.test(q)) criteria.type = 'Red';
@@ -812,37 +887,40 @@ function wireChat() {
       }
     }
 
-    // Score every wine against the query — combine criteria filtering with smart text match
+    // Build search tokens: real query tokens + synonym expansions
+    const STOPWORDS = new Set(['the','and','for','with','wine','wines','that','this','show','find','give','about','from','any','some','what','under','over','below','less','than','more','max','min','red','white','sparkling','rose','rosé','sweet','orange','italian','french','spanish','german','american','please','have','want','like','one','tell','recommend','suggest','need','looking','search','map']);
+    const queryTokens = q.split(/[\s,]+/).filter(t => t.length > 2 && !STOPWORDS.has(t));
+    const searchTokens = [...new Set([...queryTokens, ...synonymsHit])];
+
     const scored = [];
     for (const w of state.wines) {
       if (criteria.type && w.type !== criteria.type) continue;
       if (criteria.maxPrice && w.priceUSD > criteria.maxPrice) continue;
       if (criteria.vintage && String(w.vintage) !== criteria.vintage) continue;
       if (criteria.country && w.country !== criteria.country) continue;
-      // Text relevance
-      const nameL = (w.name + ' ' + (w.vintage || '')).toLowerCase();
+      const nameL = ((w.vintage ? w.vintage + ' ' : '') + w.name).toLowerCase();
       const producerL = (w.producer || '').toLowerCase();
       const regionL = (w.region || '').toLowerCase();
+      const countryL = (w.country || '').toLowerCase();
       const grapeL = (w.grapes || []).join(' ').toLowerCase();
       let score = 0;
-      // pull out keywords from the query that aren't already used as criteria
-      const tokens = q.split(/\s+/).filter(t => t.length > 2 && !['the','and','for','with','wine','wines','that','this','show','find','give','about','from','any','some','what','under','over','below','less','than','more','max','min'].includes(t));
-      for (const tok of tokens) {
-        if (nameL.includes(tok)) score += 30;
-        if (producerL.includes(tok)) score += 25;
-        if (regionL.includes(tok)) score += 20;
-        if (grapeL.includes(tok)) score += 18;
+      for (const tok of searchTokens) {
+        if (nameL.includes(tok)) score += 50;
+        if (producerL.includes(tok)) score += 35;
+        if (regionL.includes(tok)) score += 30;
+        if (grapeL.includes(tok)) score += 25;
+        if (countryL.includes(tok)) score += 15;
       }
-      // If no text criteria and there are filter criteria, score by having any criterion match
-      if (score === 0 && (criteria.type || criteria.country || criteria.maxPrice)) score = 1;
+      // If no text match but filter criteria are set, still include
+      if (score === 0 && (criteria.type || criteria.country || criteria.maxPrice || criteria.vintage)) score = 1;
       if (score > 0) scored.push([score, w]);
     }
     scored.sort((a, b) => b[0] - a[0]);
     const top = scored.slice(0, 5).map(s => s[1]);
 
     if (!top.length) {
-      botSay(`I couldn't find any wines matching "${escapeHtml(rawQuery)}". Try a producer name, a region, a grape, or a wine style.`,
-        ['Brunello', 'Pinot Noir', 'Sicily', 'Champagne']);
+      botSay(`No wines match <i>"${escapeHtml(rawQuery)}"</i>. The catalog has 441 wines — try a famous region or grape.`,
+        ['Sancerre', 'Pinot Noir', 'Sicily', 'Tuscany', 'Champagne', 'Albariño']);
       return;
     }
 
