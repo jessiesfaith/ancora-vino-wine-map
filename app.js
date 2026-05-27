@@ -187,18 +187,92 @@ map.getPane('wineDots').style.zIndex = 550;
 
 // ---------- Region coloring (semi-transparent circles per wine region) ----------
 function loadCountryLayer() {
-  // Wine regions that ARE present in our catalog — only color admin-1 polygons whose
-  // mapped wine region is actually represented.
   const wineRegionsInUse = new Set(state.wines.map(w => w.region));
 
-  // Fetch admin-1 (states/provinces) polygons. CDN-hosted Natural Earth 50m.
-  fetch('https://cdn.jsdelivr.net/gh/nvkelso/natural-earth-vector@master/geojson/ne_50m_admin_1_states_provinces.geojson')
-    .then(r => r.json())
-    .then(geo => renderRegionPolygons(geo, wineRegionsInUse))
-    .catch(err => {
-      console.warn('Admin-1 GeoJSON failed, falling back to circles:', err);
-      renderRegionCircles();
+  // Sources: Italy + France region polygons (country-specific datasets are far smaller
+  // than Natural Earth 10m). Each property name differs — we normalize via nameExtractor.
+  const sources = [
+    {
+      url: 'https://raw.githubusercontent.com/openpolis/geojson-italy/master/geojson/limits_IT_regions.geojson',
+      nameExtractor: p => p.den_reg || p.reg_name,
+    },
+    {
+      // Pre-2015 22-region structure — maps cleaner to wine regions
+      url: 'https://raw.githubusercontent.com/gregoiredavid/france-geojson/master/regions-avant-redecoupage-2015.geojson',
+      nameExtractor: p => p.nom,
+    },
+    {
+      // Natural Earth 50m — gives USA states + Australia/Brazil/etc.
+      url: 'https://cdn.jsdelivr.net/gh/nvkelso/natural-earth-vector@master/geojson/ne_50m_admin_1_states_provinces.geojson',
+      nameExtractor: p => p.name || p.name_en,
+    },
+  ];
+
+  // Render circles for everything first (covers any region whose polygon won't load)
+  renderRegionCircles();
+
+  Promise.all(sources.map(s => fetch(s.url).then(r => r.json()).then(geo => ({geo, ext: s.nameExtractor})).catch(() => null)))
+    .then(results => {
+      const allMatched = [];
+      for (const r of results) {
+        if (!r) continue;
+        for (const f of r.geo.features) {
+          const name = r.ext(f.properties || {});
+          const mapped = ADMIN1_TO_WINE_REGION[name];
+          if (mapped && wineRegionsInUse.has(mapped)) {
+            allMatched.push({ feature: f, name, wineRegion: mapped });
+          }
+        }
+      }
+      renderRegionPolygonsFromMatched(allMatched);
     });
+}
+
+function renderRegionPolygonsFromMatched(matched) {
+  // Compute centroid for each
+  for (const m of matched) {
+    const layer = L.geoJSON(m.feature);
+    const b = layer.getBounds();
+    m.center = b.getCenter();
+    m.span = Math.max(
+      kmBetween(b.getNorth(), m.center.lng, b.getSouth(), m.center.lng),
+      kmBetween(m.center.lat, b.getWest(), m.center.lat, b.getEast())
+    );
+  }
+  // Sort north→south for deterministic graph coloring order
+  matched.sort((a, b) => b.center.lat - a.center.lat || a.center.lng - b.center.lng);
+  const colorFor = new Map();
+  for (const m of matched) {
+    const used = new Set();
+    for (const other of matched) {
+      if (other === m || !colorFor.has(other)) continue;
+      if (kmBetween(m.center.lat, m.center.lng, other.center.lat, other.center.lng) < 350) {
+        used.add(colorFor.get(other));
+      }
+    }
+    const color = REGION_PALETTE.find(c => !used.has(c)) || REGION_PALETTE[matched.indexOf(m) % REGION_PALETTE.length];
+    colorFor.set(m, color);
+  }
+
+  // Clear circle fallbacks (admin-1 polygons replace them) and draw polygons
+  state.regionFillLayers.forEach(l => map.removeLayer(l));
+  state.regionFillLayers = [];
+  state.regionLabels.forEach(l => map.removeLayer(l));
+  state.regionLabels = [];
+
+  for (const m of matched) {
+    const color = colorFor.get(m);
+    const layer = L.geoJSON(m.feature, {
+      style: { fillColor: color, color: '#2a1d1f', weight: 0.7, fillOpacity: 0.62 },
+      pane: 'regionFills',
+      interactive: false,
+    }).addTo(map);
+    layer._labelCenter = m.center;
+    layer._labelName = m.wineRegion;
+    layer._labelSpan = m.span;
+    state.regionFillLayers.push(layer);
+  }
+  updateRegionLabels();
 }
 
 function renderRegionPolygons(geo, wineRegionsInUse) {
