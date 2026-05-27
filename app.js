@@ -64,7 +64,7 @@ const state = {
   highlightWineKey: null, // when search picks one, draw extra ring
   cart: [], // demo cart: [{ name, vintage, priceUSD, qty }]
   hasUserPannedOrZoomed: false,
-  state.regionFillLayers: [],
+  regionFillLayers: [],
 };
 
 // ---------- Init ----------
