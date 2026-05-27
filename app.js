@@ -191,41 +191,47 @@ function loadCountryLayer() {
 
   // Sources: Italy + France region polygons (country-specific datasets are far smaller
   // than Natural Earth 10m). Each property name differs — we normalize via nameExtractor.
+  // renderAll=true: render every polygon in this source (so the country looks whole).
+  // renderAll=false: only render polygons that map to a wine region we have wines from.
   const sources = [
     {
       url: 'https://raw.githubusercontent.com/openpolis/geojson-italy/master/geojson/limits_IT_regions.geojson',
       nameExtractor: p => p.den_reg || p.reg_name,
+      renderAll: true,
     },
     {
-      // Pre-2015 22-region structure — maps cleaner to wine regions
       url: 'https://raw.githubusercontent.com/gregoiredavid/france-geojson/master/regions-avant-redecoupage-2015.geojson',
       nameExtractor: p => p.nom,
+      renderAll: true,
     },
     {
-      // Natural Earth 50m — gives USA states + Australia/Brazil/etc.
+      // Natural Earth 50m — USA states + Australia/Brazil/etc. (just render wine ones)
       url: 'https://cdn.jsdelivr.net/gh/nvkelso/natural-earth-vector@master/geojson/ne_50m_admin_1_states_provinces.geojson',
       nameExtractor: p => p.name || p.name_en,
+      renderAll: false,
     },
   ];
 
   // Render circles for everything first (covers any region whose polygon won't load)
   renderRegionCircles();
 
-  Promise.all(sources.map(s => fetch(s.url).then(r => r.json()).then(geo => ({geo, ext: s.nameExtractor})).catch(() => null)))
-    .then(results => {
-      const allMatched = [];
-      for (const r of results) {
-        if (!r) continue;
-        for (const f of r.geo.features) {
-          const name = r.ext(f.properties || {});
-          const mapped = ADMIN1_TO_WINE_REGION[name];
-          if (mapped && wineRegionsInUse.has(mapped)) {
-            allMatched.push({ feature: f, name, wineRegion: mapped });
-          }
+  Promise.all(sources.map(s =>
+    fetch(s.url).then(r => r.json()).then(geo => ({ geo, ext: s.nameExtractor, renderAll: s.renderAll })).catch(() => null)
+  )).then(results => {
+    const allMatched = [];
+    for (const r of results) {
+      if (!r) continue;
+      for (const f of r.geo.features) {
+        const name = r.ext(f.properties || {});
+        const mapped = ADMIN1_TO_WINE_REGION[name];
+        const isWine = mapped && wineRegionsInUse.has(mapped);
+        if (r.renderAll || isWine) {
+          allMatched.push({ feature: f, name, wineRegion: isWine ? mapped : null });
         }
       }
-      renderRegionPolygonsFromMatched(allMatched);
-    });
+    }
+    renderRegionPolygonsFromMatched(allMatched);
+  });
 }
 
 function renderRegionPolygonsFromMatched(matched) {
@@ -547,7 +553,7 @@ function updateRegionLabels() {
   if (state.regionFillLayers.length && state.regionFillLayers[0]._labelCenter) {
     const fontSize = Math.min(14, 9 + (zoom - 4));
     for (const layer of state.regionFillLayers) {
-      if (!layer._labelCenter) continue;
+      if (!layer._labelCenter || !layer._labelName) continue; // skip un-named (non-wine) regions
       const span = layer._labelSpan || 150;
       const visibilityScore = zoom + Math.log2(span / 100);
       if (visibilityScore < 5.0) continue; // too small at this zoom
