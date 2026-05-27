@@ -88,27 +88,48 @@ const ADMIN1_TO_WINE_REGION = {
   'Crete': 'Crete', 'Kriti': 'Crete',
   // UK
   'Kent': 'Kent',
-  // California 5 macros (custom inline polygons — see CALIFORNIA_MACROS_GEOJSON)
+  // California 6 macros (custom inline polygons — see CALIFORNIA_MACROS_GEOJSON)
   'North Coast': 'North Coast',
+  'San Francisco Bay': 'San Francisco Bay',
   'Central Valley': 'Central Valley',
   'Sierra Foothills': 'Sierra Foothills',
   'Central Coast': 'Central Coast',
-  'Southern California': 'Southern California',
+  'South Coast': 'South Coast',
+  // Australia (Natural Earth 50m has these state polygons)
+  'New South Wales': 'Hunter Valley',
+  'South Australia': 'McLaren Vale',
+  'Western Australia': 'Margaret River',
+  'Tasmania': 'Tasmania',
+  // Brazil (Natural Earth 50m)
+  'Rio Grande do Sul': 'Serra Gaúcha',
+  // New Zealand + Argentina + Uruguay — inline polygons below
+  'Marlborough Region': 'Marlborough',
+  'Mendoza Province': 'Mendoza',
+  'Canelones Department': 'Canelones',
 };
 
-// Hand-drawn polygons for California's 5 macro wine regions
-// (no public GeoJSON exists for these — approximations based on the official Wine Institute map).
-// GeoJSON uses [lng, lat] order.
-const CALIFORNIA_MACROS_GEOJSON = {
+// Hand-drawn polygons for major wine regions where no public GeoJSON exists.
+// All approximations based on official wine region maps. GeoJSON uses [lng, lat].
+const INLINE_REGIONS_GEOJSON = {
   type: 'FeatureCollection',
   features: [
+    // -------- California (6 macros, per Wine Institute) --------
     {
       type: 'Feature',
       properties: { name: 'North Coast' },
       geometry: { type: 'Polygon', coordinates: [[
-        [-124.0, 39.6], [-122.8, 39.6], [-122.2, 39.0], [-121.8, 38.4],
-        [-121.5, 38.1], [-121.85, 37.9], [-122.5, 37.85], [-122.7, 37.85],
-        [-123.0, 38.2], [-123.7, 38.9], [-124.0, 39.5], [-124.0, 39.6]
+        [-124.0, 39.6], [-122.8, 39.6], [-122.2, 39.0], [-121.8, 38.5],
+        [-121.8, 38.25], [-122.3, 38.2], [-122.8, 38.25], [-123.0, 38.5],
+        [-123.7, 38.9], [-124.0, 39.5], [-124.0, 39.6]
+      ]]}
+    },
+    {
+      type: 'Feature',
+      properties: { name: 'San Francisco Bay' },
+      geometry: { type: 'Polygon', coordinates: [[
+        [-122.8, 38.2], [-122.0, 38.2], [-121.5, 38.0], [-121.4, 37.5],
+        [-121.5, 37.0], [-122.0, 36.9], [-122.5, 37.2], [-122.8, 37.8],
+        [-122.8, 38.2]
       ]]}
     },
     {
@@ -132,18 +153,45 @@ const CALIFORNIA_MACROS_GEOJSON = {
       type: 'Feature',
       properties: { name: 'Central Coast' },
       geometry: { type: 'Polygon', coordinates: [[
-        [-122.5, 37.6], [-121.5, 37.5], [-120.5, 36.5], [-119.6, 35.0],
+        [-122.5, 36.9], [-121.5, 36.9], [-120.5, 36.0], [-119.6, 35.0],
         [-119.5, 34.5], [-119.8, 34.3], [-120.5, 34.3], [-120.9, 34.7],
-        [-121.5, 35.5], [-122.0, 36.5], [-122.5, 37.2], [-122.5, 37.6]
+        [-121.5, 35.5], [-122.0, 36.3], [-122.5, 36.7], [-122.5, 36.9]
       ]]}
     },
     {
       type: 'Feature',
-      properties: { name: 'Southern California' },
+      properties: { name: 'South Coast' },
       geometry: { type: 'Polygon', coordinates: [[
         [-118.7, 34.5], [-117.0, 34.5], [-116.0, 33.5], [-116.0, 32.7],
         [-117.0, 32.55], [-117.3, 32.7], [-118.4, 33.5], [-118.9, 34.0],
         [-118.7, 34.5]
+      ]]}
+    },
+    // -------- New Zealand: Marlborough (top of South Island) --------
+    {
+      type: 'Feature',
+      properties: { name: 'Marlborough Region' },
+      geometry: { type: 'Polygon', coordinates: [[
+        [173.0, -41.1], [174.3, -41.1], [174.4, -41.7], [174.0, -41.95],
+        [173.4, -42.0], [173.0, -41.8], [173.0, -41.1]
+      ]]}
+    },
+    // -------- Argentina: Mendoza Province --------
+    {
+      type: 'Feature',
+      properties: { name: 'Mendoza Province' },
+      geometry: { type: 'Polygon', coordinates: [[
+        [-68.0, -32.0], [-66.5, -32.0], [-66.5, -34.5], [-67.0, -36.0],
+        [-69.5, -36.5], [-69.8, -34.0], [-69.5, -32.5], [-68.0, -32.0]
+      ]]}
+    },
+    // -------- Uruguay: Canelones Department --------
+    {
+      type: 'Feature',
+      properties: { name: 'Canelones Department' },
+      geometry: { type: 'Polygon', coordinates: [[
+        [-56.6, -34.3], [-55.4, -34.3], [-55.3, -34.85], [-56.2, -34.95],
+        [-56.6, -34.7], [-56.6, -34.3]
       ]]}
     },
   ],
@@ -270,8 +318,9 @@ function loadCountryLayer() {
       renderAll: false,
     },
     {
-      // Hand-drawn California 5 macro wine regions
-      inline: CALIFORNIA_MACROS_GEOJSON,
+      // Hand-drawn polygons for regions without public GeoJSON
+      // (California 6 macros, Marlborough NZ, Mendoza Argentina, Canelones Uruguay)
+      inline: INLINE_REGIONS_GEOJSON,
       nameExtractor: p => p.name,
       renderAll: true,
       forceLabel: true, // always label even if not in catalog's wineRegionsInUse
