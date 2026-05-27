@@ -88,6 +88,65 @@ const ADMIN1_TO_WINE_REGION = {
   'Crete': 'Crete', 'Kriti': 'Crete',
   // UK
   'Kent': 'Kent',
+  // California 5 macros (custom inline polygons — see CALIFORNIA_MACROS_GEOJSON)
+  'North Coast': 'North Coast',
+  'Central Valley': 'Central Valley',
+  'Sierra Foothills': 'Sierra Foothills',
+  'Central Coast': 'Central Coast',
+  'Southern California': 'Southern California',
+};
+
+// Hand-drawn polygons for California's 5 macro wine regions
+// (no public GeoJSON exists for these — approximations based on the official Wine Institute map).
+// GeoJSON uses [lng, lat] order.
+const CALIFORNIA_MACROS_GEOJSON = {
+  type: 'FeatureCollection',
+  features: [
+    {
+      type: 'Feature',
+      properties: { name: 'North Coast' },
+      geometry: { type: 'Polygon', coordinates: [[
+        [-124.0, 39.6], [-122.8, 39.6], [-122.2, 39.0], [-121.8, 38.4],
+        [-121.5, 38.1], [-121.85, 37.9], [-122.5, 37.85], [-122.7, 37.85],
+        [-123.0, 38.2], [-123.7, 38.9], [-124.0, 39.5], [-124.0, 39.6]
+      ]]}
+    },
+    {
+      type: 'Feature',
+      properties: { name: 'Central Valley' },
+      geometry: { type: 'Polygon', coordinates: [[
+        [-122.5, 40.0], [-121.5, 40.0], [-120.8, 38.5], [-119.5, 36.5],
+        [-118.7, 35.4], [-118.7, 35.0], [-119.5, 35.2], [-120.5, 36.2],
+        [-121.5, 37.5], [-122.0, 38.5], [-122.5, 39.5], [-122.5, 40.0]
+      ]]}
+    },
+    {
+      type: 'Feature',
+      properties: { name: 'Sierra Foothills' },
+      geometry: { type: 'Polygon', coordinates: [[
+        [-121.2, 39.4], [-120.3, 39.4], [-119.7, 37.5], [-120.1, 37.2],
+        [-120.8, 38.3], [-121.2, 39.0], [-121.2, 39.4]
+      ]]}
+    },
+    {
+      type: 'Feature',
+      properties: { name: 'Central Coast' },
+      geometry: { type: 'Polygon', coordinates: [[
+        [-122.5, 37.6], [-121.5, 37.5], [-120.5, 36.5], [-119.6, 35.0],
+        [-119.5, 34.5], [-119.8, 34.3], [-120.5, 34.3], [-120.9, 34.7],
+        [-121.5, 35.5], [-122.0, 36.5], [-122.5, 37.2], [-122.5, 37.6]
+      ]]}
+    },
+    {
+      type: 'Feature',
+      properties: { name: 'Southern California' },
+      geometry: { type: 'Polygon', coordinates: [[
+        [-118.7, 34.5], [-117.0, 34.5], [-116.0, 33.5], [-116.0, 32.7],
+        [-117.0, 32.55], [-117.3, 32.7], [-118.4, 33.5], [-118.9, 34.0],
+        [-118.7, 34.5]
+      ]]}
+    },
+  ],
 };
 
 function kmBetween(lat1, lng1, lat2, lng2) {
@@ -210,14 +269,24 @@ function loadCountryLayer() {
       nameExtractor: p => p.name || p.name_en,
       renderAll: false,
     },
+    {
+      // Hand-drawn California 5 macro wine regions
+      inline: CALIFORNIA_MACROS_GEOJSON,
+      nameExtractor: p => p.name,
+      renderAll: true,
+      forceLabel: true, // always label even if not in catalog's wineRegionsInUse
+    },
   ];
 
   // Render circles for everything first (covers any region whose polygon won't load)
   renderRegionCircles();
 
-  Promise.all(sources.map(s =>
-    fetch(s.url).then(r => r.json()).then(geo => ({ geo, ext: s.nameExtractor, renderAll: s.renderAll })).catch(() => null)
-  )).then(results => {
+  Promise.all(sources.map(s => {
+    if (s.inline) return Promise.resolve({ geo: s.inline, ext: s.nameExtractor, renderAll: s.renderAll, forceLabel: s.forceLabel });
+    return fetch(s.url).then(r => r.json())
+      .then(geo => ({ geo, ext: s.nameExtractor, renderAll: s.renderAll, forceLabel: s.forceLabel }))
+      .catch(() => null);
+  })).then(results => {
     const allMatched = [];
     for (const r of results) {
       if (!r) continue;
@@ -226,7 +295,9 @@ function loadCountryLayer() {
         const mapped = ADMIN1_TO_WINE_REGION[name];
         const isWine = mapped && wineRegionsInUse.has(mapped);
         if (r.renderAll || isWine) {
-          allMatched.push({ feature: f, name, wineRegion: isWine ? mapped : null });
+          // Label if: this is a wine region in the catalog, OR the source explicitly wants labels
+          const labelName = isWine ? mapped : (r.forceLabel ? (mapped || name) : null);
+          allMatched.push({ feature: f, name, wineRegion: labelName });
         }
       }
     }
