@@ -5,16 +5,37 @@
 const TYPE_COLOR = { Red: '#b8324a', White: '#e8d27a', 'Rosé': '#e08aa3', Sparkling: '#6fb3c9', Sweet: '#c794d6', Orange: '#d68a3a' };
 const STORAGE_KEY = 'ancora-map-member';
 
-// Wine-producing countries — used to color country polygons gold.
-// Keys match the "name" property in the Natural Earth countries GeoJSON.
-const WINE_COUNTRIES = new Set([
-  'Italy', 'France', 'Spain', 'Portugal', 'Germany', 'Austria', 'Greece',
-  'Hungary', 'United States of America', 'Argentina', 'Uruguay', 'Mexico',
-  'South Africa', 'New Zealand', 'Australia', 'United Kingdom', 'Lebanon',
-  'Armenia', 'Bosnia and Herz.', 'Bosnia and Herzegovina', 'Croatia',
-  'Georgia', 'Cyprus', 'Chile', 'Slovenia', 'Switzerland', 'Romania',
-  'Bulgaria', 'Moldova', 'Turkey', 'Czechia', 'Israel',
-]);
+// Wine-producing countries — each gets its own warm earth-tone fill so
+// adjacent countries are visually distinguishable on the map.
+// Keys match the "ADMIN" property in the Natural Earth countries GeoJSON.
+const COUNTRY_COLORS = {
+  'Italy':                    '#7a4226',
+  'France':                   '#8e5a3c',
+  'Spain':                    '#9a6b3f',
+  'Portugal':                 '#6b3d2c',
+  'Germany':                  '#5e4a3a',
+  'Austria':                  '#7e6b4a',
+  'Greece':                   '#8a6a3c',
+  'Hungary':                  '#6a4c3a',
+  'United States of America': '#7a5044',
+  'Argentina':                '#8c4a3c',
+  'Uruguay':                  '#6f3e34',
+  'Mexico':                   '#a06340',
+  'South Africa':             '#7b4d35',
+  'New Zealand':              '#5d4a3e',
+  'Australia':                '#9a5a3e',
+  'United Kingdom':           '#5a4838',
+  'Lebanon':                  '#8a5538',
+  'Armenia':                  '#704630',
+  'Bosnia and Herz.':         '#6c4a36',
+  'Croatia':                  '#7d5638',
+  'Georgia':                  '#856244',
+  'Cyprus':                   '#a86b3a',
+  'Chile':                    '#6e3f30',
+  'Slovenia':                 '#6e5440',
+  'Switzerland':              '#785a44',
+};
+const WINE_COUNTRIES = new Set(Object.keys(COUNTRY_COLORS));
 // Our catalog labels USA wines as "California" / "Oregon" etc with country "California"/"Oregon"/"New York"/"Washington" — normalize for country polygon match.
 const COUNTRY_TO_POLYGON = {
   California: 'United States of America',
@@ -76,13 +97,16 @@ function loadCountryLayer() {
         style: feature => {
           const p = feature.properties || {};
           const name = p.ADMIN || p.NAME || p.name;
-          const isWine = WINE_COUNTRIES.has(name);
-          return {
-            fillColor: isWine ? '#5a3a2f' : '#0c0709',
-            weight: 0.4,
-            color: isWine ? '#7a5544' : '#1f1418',
-            fillOpacity: isWine ? 0.55 : 0.25,
-          };
+          const color = COUNTRY_COLORS[name];
+          if (color) {
+            return {
+              fillColor: color,
+              weight: 0.6,
+              color: '#2a1d1f',
+              fillOpacity: 0.7,
+            };
+          }
+          return { fillColor: '#0c0709', weight: 0.3, color: '#1f1418', fillOpacity: 0.25 };
         },
         interactive: false,
       }).addTo(map);
@@ -263,7 +287,9 @@ function render(fitBounds) {
 function updateRegionLabels() {
   state.regionLabels.forEach(t => map.removeLayer(t));
   state.regionLabels = [];
-  // Show every visible region — overlap is fine, this is background text.
+  const zoom = map.getZoom();
+  // Hidden at world view, fade in as you zoom in. Below zoom 5 = nothing.
+  if (zoom < 5) return;
   const visibleWines = (state.member && state.memberView === 'mine')
     ? state.member.purchases.filter(w => w.lat != null)
     : state.wines.filter(passesFilters);
@@ -273,9 +299,19 @@ function updateRegionLabels() {
     if (!byLocation.has(key)) byLocation.set(key, { lat: w.lat, lng: w.lng, region: w.region, count: 0 });
     byLocation.get(key).count++;
   }
-  for (const c of byLocation.values()) {
+  // At zoom 5 show only the top regions by wine count; more appear as you zoom in.
+  const limit = zoom <= 5 ? 12 : zoom <= 6 ? 28 : zoom <= 7 ? 60 : 200;
+  const clusters = [...byLocation.values()].sort((a, b) => b.count - a.count).slice(0, limit);
+  // Font scales with zoom for a more "map label" feel
+  const fontSize = Math.min(13, 9 + (zoom - 5));
+  for (const c of clusters) {
     const t = L.marker([c.lat, c.lng], {
-      icon: L.divIcon({ className: 'region-label', html: escapeHtml(c.region), iconSize: null, iconAnchor: [0, -10] }),
+      icon: L.divIcon({
+        className: 'region-label',
+        html: `<span style="font-size:${fontSize}px">${escapeHtml(c.region)}</span>`,
+        iconSize: null,
+        iconAnchor: [0, -8],
+      }),
       interactive: false,
       keyboard: false,
       pane: 'regionLabels',
